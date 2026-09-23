@@ -554,7 +554,11 @@ const PROMOTIONS = [
   // aplica al calcular puntos), así que se apaga aquí en vez de borrarla —
   // cuando esa lógica exista, basta con volver a poner active: true.
   { id: "pr1", title: "Puntos dobles esta semana", description: "Todas tus compras suman el doble de puntos hasta el domingo.", startDate: "2026-09-14", endDate: "2026-09-20", type: "bonus", value: "2x", active: false },
-  { id: "pr2", title: "Envío sin costo +$600", description: "Pedidos mayores a $600 no pagan envío.", startDate: "2026-09-01", endDate: "2026-09-30", type: "shipping", value: "$0", active: true },
+  // Desactivada: el envío nunca es gratis (se cotiza aparte, ver ch-eyebrow
+  // "El costo de envío no está incluido"), así que este mensaje contradecía
+  // al resto de la app. Se apaga aquí en vez de borrarla por si algún día
+  // se decide ofrecer envío gratis de verdad.
+  { id: "pr2", title: "Envío sin costo +$600", description: "Pedidos mayores a $600 no pagan envío.", startDate: "2026-09-01", endDate: "2026-09-30", type: "shipping", value: "$0", active: false },
 ];
 
 export function makeCustomer(over) {

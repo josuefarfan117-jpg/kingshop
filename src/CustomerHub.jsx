@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import {
   registerCustomer, signInCustomer, signOutCustomer,
-  getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin,
+  getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin, hasActiveAdminSession,
 } from "./supabaseAuth.js";
 import { supabase } from "./supabaseClient.js";
 import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders, updatePendingOrderItems } from "./supabaseOrders.js";
@@ -1236,6 +1236,32 @@ export default function CustomerHub() {
       const url = new URL(window.location.href);
       if (url.searchParams.get("staff") === "1") setView("adminGate");
     } catch (e) { /* entorno sin window/URL */ }
+  }, []);
+
+  // Recargar el panel de admin no debe pedir correo y contraseña otra vez: la
+  // sesión real de Supabase ya está guardada en el navegador. Si venías del
+  // panel (o abres el enlace ?staff=1) y esa sesión sigue siendo de un
+  // administrador, se abre directo el panel. Si ya no es válida, se limpia la
+  // marca local para no mostrar un panel sin permisos reales.
+  useEffect(() => {
+    let wantsAdmin = false;
+    try {
+      wantsAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1" ||
+        new URL(window.location.href).searchParams.get("staff") === "1";
+    } catch (e) { /* sin window/URL */ }
+    if (!wantsAdmin) return;
+    let active = true;
+    hasActiveAdminSession().then((ok) => {
+      if (!active) return;
+      if (ok) {
+        grantAdminAccess();
+        setView("admin");
+      } else {
+        setAdminAuthed(false);
+        try { sessionStorage.removeItem(ADMIN_SESSION_KEY); } catch (e) { /* ignorar */ }
+      }
+    });
+    return () => { active = false; };
   }, []);
 
   // El dueño del código, si existe y es una cuenta activa. Antes esto se

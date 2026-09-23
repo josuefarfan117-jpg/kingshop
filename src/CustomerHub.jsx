@@ -27,7 +27,7 @@ import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, lo
 const POINTS_PER_PURCHASE_RATE = 0.2; // DEMO: 1 MXN gastado ≈ 0.2 puntos. Configurable.
 
 // Número real de WhatsApp del negocio — el botón "Hacer pedido" abre el chat aquí.
-const WHATSAPP_NUMBER = "523314862857";
+const WHATSAPP_NUMBER = "523320465574";
 function waLink(text) {
   return `https://wa.me/${WHATSAPP_NUMBER}${text ? "?text=" + encodeURIComponent(text) : ""}`;
 }
@@ -1485,7 +1485,11 @@ export default function CustomerHub() {
     const clienteResult = await ensureClienteRow({
       dbId: customer.dbId, phone: customer.phone, name: customer.name, origin: customer.origin,
     });
-    if (clienteResult.error) { console.warn("No se pudo guardar el pedido pendiente en Supabase:", clienteResult.error); return; }
+    if (clienteResult.error) {
+      console.warn("No se pudo guardar el pedido pendiente en Supabase:", clienteResult.error);
+      showToast("⚠️ El pedido se envió por WhatsApp pero no se sincronizó con el panel. Avisa al admin.");
+      return;
+    }
     if (clienteResult.dbId && clienteResult.dbId !== customer.dbId) {
       setCustomers((cs) => cs.map((c) => c.id === customer.id ? { ...c, dbId: clienteResult.dbId } : c));
     }
@@ -1501,7 +1505,11 @@ export default function CustomerHub() {
       subtotal, creditUsed, total, pointsEarned,
       paymentMethod: delivery.paymentMethod, address: delivery.address, reference: delivery.reference,
     });
-    if (result.error) { console.warn("No se pudo guardar el pedido pendiente en Supabase:", result.error); return; }
+    if (result.error) {
+      console.warn("No se pudo guardar el pedido pendiente en Supabase:", result.error);
+      showToast("⚠️ El pedido se envió por WhatsApp pero no se sincronizó con el panel. Avisa al admin.");
+      return;
+    }
 
     // Solo le pega el id real de Supabase al pedido local que ya está en
     // pantalla (para que confirmarlo/cancelarlo después actualice el mismo

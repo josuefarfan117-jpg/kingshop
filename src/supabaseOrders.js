@@ -55,9 +55,12 @@ export async function createPendingOrder({
   clienteDbId, items, subtotal, creditUsed, total, pointsEarned,
   paymentMethod, address, reference,
 }) {
-  const { data, error } = await supabase
-    .from("pedidos")
-    .insert({
+  try {
+    // OJO: sin .select() a propósito. Con .select() Supabase exige además una
+    // política de LECTURA sobre el renglón recién creado; si esa política no
+    // deja al cliente leerlo, TODO el insert se rechaza aunque la política de
+    // INSERT esté bien. Sin .select() solo se necesita permiso de insertar.
+    const { error } = await supabase.from("pedidos").insert({
       cliente_id: clienteDbId,
       status: "Pendiente",
       items: items.map(({ dbId, ...rest }) => rest),
@@ -69,11 +72,26 @@ export async function createPendingOrder({
       payment_method: paymentMethod || "",
       address: address || "",
       reference: reference || "",
-    })
-    .select("id")
-    .single();
-  if (error) return { error: "No se pudo guardar el pedido pendiente en Supabase: " + error.message };
-  return { ok: true, pedidoId: data.id };
+    });
+    if (error) {
+      return { error: `No se pudo guardar el pedido pendiente en Supabase: ${error.message}${error.code ? ` (código ${error.code})` : ""}` };
+    }
+
+    // Mejor esfuerzo: recuperar el id para poder cancelar/confirmar después
+    // sobre el mismo renglón. Si el cliente no tiene permiso de lectura,
+    // simplemente queda null — el pedido ya está guardado y el admin lo ve.
+    let pedidoId = null;
+    try {
+      const { data } = await supabase
+        .from("pedidos").select("id")
+        .eq("cliente_id", clienteDbId).eq("status", "Pendiente")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      pedidoId = data?.id ?? null;
+    } catch (e) { /* sin id, no pasa nada */ }
+    return { ok: true, pedidoId };
+  } catch (e) {
+    return { error: "Error inesperado al guardar el pedido: " + (e?.message || String(e)) };
+  }
 }
 
 /* ----------------------------------------------------------------------------

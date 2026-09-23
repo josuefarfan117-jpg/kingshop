@@ -51,19 +51,40 @@ export async function ensureClienteRow({ dbId, phone, name, origin }) {
    en otro dispositivo, nunca lo veía en "Pedidos por confirmar". Se llama
    apenas se arma el pedido, antes de que un administrador toque nada.
 ---------------------------------------------------------------------------- */
+const isMissingFunction = (error) =>
+  !!error && (error.code === "PGRST202" || error.code === "42883" || /could not find the function|does not exist/i.test(error.message || ""));
+
 export async function createPendingOrder({
   clienteDbId, items, subtotal, creditUsed, total, pointsEarned,
   paymentMethod, address, reference,
 }) {
   try {
-    // OJO: sin .select() a propósito. Con .select() Supabase exige además una
-    // política de LECTURA sobre el renglón recién creado; si esa política no
-    // deja al cliente leerlo, TODO el insert se rechaza aunque la política de
-    // INSERT esté bien. Sin .select() solo se necesita permiso de insertar.
+    const cleanItems = items.map(({ dbId, ...rest }) => rest);
+
+    // Camino principal: función SQL que guarda el pedido Y aparta el crédito de
+    // recompensas en una sola operación, y regresa el id real del pedido.
+    const rpc = await supabase.rpc("create_pending_order", {
+      p_cliente_id: clienteDbId,
+      p_items: cleanItems,
+      p_subtotal: subtotal ?? total,
+      p_credit_used: creditUsed || 0,
+      p_total: total,
+      p_points_earned: pointsEarned,
+      p_payment_method: paymentMethod || "",
+      p_address: address || "",
+      p_reference: reference || "",
+    });
+    if (!rpc.error) return { ok: true, pedidoId: rpc.data?.id ?? null };
+    if (!isMissingFunction(rpc.error)) {
+      return { error: `No se pudo guardar el pedido pendiente en Supabase: ${rpc.error.message}${rpc.error.code ? ` (código ${rpc.error.code})` : ""}` };
+    }
+
+    // Respaldo (solo si la función SQL todavía no existe): insert directo, sin
+    // .select() para no exigir permiso de lectura sobre el renglón nuevo.
     const { error } = await supabase.from("pedidos").insert({
       cliente_id: clienteDbId,
       status: "Pendiente",
-      items: items.map(({ dbId, ...rest }) => rest),
+      items: cleanItems,
       subtotal: subtotal ?? total,
       credit_used: creditUsed || 0,
       total,
@@ -76,10 +97,6 @@ export async function createPendingOrder({
     if (error) {
       return { error: `No se pudo guardar el pedido pendiente en Supabase: ${error.message}${error.code ? ` (código ${error.code})` : ""}` };
     }
-
-    // Mejor esfuerzo: recuperar el id para poder cancelar/confirmar después
-    // sobre el mismo renglón. Si el cliente no tiene permiso de lectura,
-    // simplemente queda null — el pedido ya está guardado y el admin lo ve.
     let pedidoId = null;
     try {
       const { data } = await supabase
@@ -291,17 +308,33 @@ export async function recordSale({
     }
   }
 
-  const { data: clienteRow, error: clienteError } = await supabase
-    .from("clientes")
-    .update({
-      points: (currentPoints || 0) + pointsEarned,
-      total_purchases: (currentPurchases || 0) + 1,
-      total_spent: (currentSpent || 0) + total,
-      last_purchase_at: today,
-    })
-    .eq("id", clienteDbId)
-    .select("points, total_purchases, total_spent, last_purchase_at")
-    .single();
+  // Suma puntos/compras/gasto directo en la base (atómico). Antes se escribía el
+  // valor que tenía la pantalla, lo que podía pisar un canje hecho desde el
+  // teléfono del cliente en ese mismo rato.
+  let clienteRow = null;
+  let clienteError = null;
+  const bump = await supabase.rpc("bump_customer_after_sale", {
+    p_cliente_id: clienteDbId, p_points: pointsEarned, p_total: total,
+  });
+  if (!bump.error) {
+    clienteRow = bump.data || null;
+  } else if (isMissingFunction(bump.error)) {
+    // Respaldo mientras la función SQL no exista.
+    const fb = await supabase
+      .from("clientes")
+      .update({
+        points: (currentPoints || 0) + pointsEarned,
+        total_purchases: (currentPurchases || 0) + 1,
+        total_spent: (currentSpent || 0) + total,
+        last_purchase_at: today,
+      })
+      .eq("id", clienteDbId)
+      .select("points, total_purchases, total_spent, last_purchase_at")
+      .single();
+    clienteRow = fb.data || null; clienteError = fb.error;
+  } else {
+    clienteError = bump.error;
+  }
   if (clienteError) {
     console.warn("recordSale: pedido guardado pero no se pudo actualizar el cliente:", clienteError);
     warnings.push("no se pudieron actualizar los puntos/compras del cliente");

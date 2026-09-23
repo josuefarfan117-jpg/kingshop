@@ -133,24 +133,62 @@ function dbRowToOrder(row) {
   };
 }
 
-export async function loadOrdersWithCustomers() {
-  const { data, error } = await supabase
-    .from("pedidos")
-    .select("*, clientes(*)")
-    .order("created_at", { ascending: false });
-  if (error) return { error: "No se pudieron cargar los pedidos de Supabase: " + error.message };
-
-  const customers = [];
-  const seenClientes = new Set();
-  const orders = [];
-  for (const row of data || []) {
-    if (row.clientes && !seenClientes.has(row.cliente_id)) {
-      seenClientes.add(row.cliente_id);
-      customers.push(dbRowToCustomer(row.clientes, null));
-    }
-    orders.push(dbRowToOrder(row));
+/* Pedidos del cliente que tiene la sesión abierta (su historial real).
+   Usa la función SQL `get_my_orders`, que ya filtra por el dueño de la sesión
+   y no depende de permisos de lectura sobre `clientes`. */
+export async function loadMyOrders() {
+  try {
+    const { data, error } = await supabase.rpc("get_my_orders");
+    if (error) return { error: `No se pudo cargar tu historial de pedidos: ${error.message}${error.code ? ` (código ${error.code})` : ""}` };
+    return { ok: true, orders: (data || []).map(dbRowToOrder) };
+  } catch (e) {
+    return { error: "Error inesperado al cargar tu historial: " + (e?.message || String(e)) };
   }
-  return { ok: true, customers, orders };
+}
+
+export async function loadOrdersWithCustomers() {
+  try {
+    // Diagnóstico: ¿esta pestaña tiene sesión de Supabase y es de admin? Sin
+    // eso, RLS no marca error — simplemente regresa CERO renglones, y el
+    // panel se ve vacío aunque la tabla tenga pedidos.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const hasSession = !!sessionData?.session;
+    const { data: adminFlag } = await supabase.rpc("is_current_user_admin");
+    const isAdmin = adminFlag === true;
+
+    // Dos consultas simples en vez de un JOIN (`clientes(*)`): si el admin no
+    // puede leer `clientes` (o el JOIN falla), los pedidos aun así llegan.
+    const { data: pedidos, error } = await supabase
+      .from("pedidos")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) {
+      return { error: `No se pudieron cargar los pedidos de Supabase: ${error.message}${error.code ? ` (código ${error.code})` : ""}` };
+    }
+
+    const ids = [...new Set((pedidos || []).map((p) => p.cliente_id).filter((id) => id != null))];
+    let clientesRows = [];
+    let clientesError = null;
+    if (ids.length > 0) {
+      const { data, error: cErr } = await supabase.from("clientes").select("*").in("id", ids);
+      if (cErr) clientesError = cErr.message; else clientesRows = data || [];
+    }
+
+    const customers = clientesRows.map((row) => dbRowToCustomer(row, null));
+    const orders = (pedidos || []).map(dbRowToOrder);
+    return {
+      ok: true, customers, orders,
+      diag: {
+        hasSession, isAdmin,
+        pedidosLeidos: orders.length,
+        pendientes: orders.filter((o) => o.status === "Pendiente").length,
+        clientesEncontrados: clientesRows.length,
+        clientesError,
+      },
+    };
+  } catch (e) {
+    return { error: "Error inesperado al cargar pedidos: " + (e?.message || String(e)) };
+  }
 }
 
 /* ----------------------------------------------------------------------------

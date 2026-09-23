@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient.js";
+import { dbRowToCustomer } from "./supabaseAuth.js";
 
 /* ----------------------------------------------------------------------------
    GARANTIZA QUE EL CLIENTE TENGA UN RENGLÓN REAL EN `clientes`
@@ -45,6 +46,96 @@ export async function ensureClienteRow({ dbId, phone, name, origin }) {
 }
 
 /* ----------------------------------------------------------------------------
+   GUARDA UN PEDIDO "PENDIENTE" EN CUANTO EL CLIENTE LO CONFIRMA EN LA PÁGINA
+   Antes esto solo vivía en la memoria del navegador del cliente — el admin,
+   en otro dispositivo, nunca lo veía en "Pedidos por confirmar". Se llama
+   apenas se arma el pedido, antes de que un administrador toque nada.
+---------------------------------------------------------------------------- */
+export async function createPendingOrder({
+  clienteDbId, items, subtotal, creditUsed, total, pointsEarned,
+  paymentMethod, address, reference,
+}) {
+  const { data, error } = await supabase
+    .from("pedidos")
+    .insert({
+      cliente_id: clienteDbId,
+      status: "Pendiente",
+      items: items.map(({ dbId, ...rest }) => rest),
+      subtotal: subtotal ?? total,
+      credit_used: creditUsed || 0,
+      total,
+      points_earned: pointsEarned,
+      origin: "app",
+      payment_method: paymentMethod || "",
+      address: address || "",
+      reference: reference || "",
+    })
+    .select("id")
+    .single();
+  if (error) return { error: "No se pudo guardar el pedido pendiente en Supabase: " + error.message };
+  return { ok: true, pedidoId: data.id };
+}
+
+/* ----------------------------------------------------------------------------
+   CAMBIA SOLO EL ESTADO DE UN PEDIDO YA GUARDADO (p. ej. "Cancelado").
+   Si el pedido nunca llegó a guardarse en Supabase (pedidoId nulo — ver
+   createPendingOrder), no hay nada que actualizar ahí y se responde ok igual,
+   porque la pantalla ya refleja el cambio de todas formas.
+---------------------------------------------------------------------------- */
+export async function updateOrderStatus(pedidoId, status) {
+  if (pedidoId == null) return { ok: true };
+  const { error } = await supabase.from("pedidos").update({ status }).eq("id", pedidoId);
+  if (error) return { error: "No se pudo actualizar el pedido en Supabase: " + error.message };
+  return { ok: true };
+}
+
+/* ----------------------------------------------------------------------------
+   TRAE TODOS LOS PEDIDOS (pendientes Y completados, de TODOS los clientes)
+   CON SU CLIENTE, DIRECTO DE SUPABASE. Esto es lo que le da memoria real al
+   panel de admin: antes, "Pedidos por confirmar", el historial y las
+   estadísticas solo mostraban lo que había pasado en esa misma pestaña desde
+   que se abrió — vacío en cualquier otro dispositivo o después de recargar.
+---------------------------------------------------------------------------- */
+function dbRowToOrder(row) {
+  return {
+    id: `db_${row.id}`,
+    dbOrderId: row.id,
+    customerId: `db_${row.cliente_id}`,
+    date: (row.confirmed_at || row.created_at || "").slice(0, 10),
+    subtotal: Number(row.subtotal ?? row.total ?? 0),
+    creditUsed: Number(row.credit_used || 0),
+    total: Number(row.total || 0),
+    status: row.status,
+    pointsEarned: row.points_earned || 0,
+    items: row.items || [],
+    origin: row.origin || "app",
+    paymentMethod: row.payment_method || "",
+    address: row.address || "",
+    reference: row.reference || "",
+  };
+}
+
+export async function loadOrdersWithCustomers() {
+  const { data, error } = await supabase
+    .from("pedidos")
+    .select("*, clientes(*)")
+    .order("created_at", { ascending: false });
+  if (error) return { error: "No se pudieron cargar los pedidos de Supabase: " + error.message };
+
+  const customers = [];
+  const seenClientes = new Set();
+  const orders = [];
+  for (const row of data || []) {
+    if (row.clientes && !seenClientes.has(row.cliente_id)) {
+      seenClientes.add(row.cliente_id);
+      customers.push(dbRowToCustomer(row.clientes, null));
+    }
+    orders.push(dbRowToOrder(row));
+  }
+  return { ok: true, customers, orders };
+}
+
+/* ----------------------------------------------------------------------------
    PUNTO ÚNICO DE ESCRITURA PARA UNA VENTA REAL
    Usado tanto por confirmOrder (pedido de la página) como por
    registerManualSale (venta de WhatsApp) — así nunca hay dos caminos que
@@ -53,33 +144,40 @@ export async function ensureClienteRow({ dbId, phone, name, origin }) {
    esfuerzo, el stock, los totales del cliente y el movimiento de puntos —
    igual que setProductStock, si algo suelto falla solo se avisa en consola en
    vez de deshacer una venta que ya quedó guardada.
+
+   `pedidoId`: si el pedido ya existía en Supabase como "Pendiente" (creado
+   por createPendingOrder cuando el cliente lo confirmó en la página), se
+   ACTUALIZA ese mismo renglón a "Completado" en vez de insertar uno nuevo —
+   así nunca queda un pedido duplicado. Si no hay pedidoId (venta manual de
+   WhatsApp, o un pedido de la página que por algo nunca se guardó como
+   pendiente), se inserta uno nuevo directo como "Completado", igual que antes.
 ---------------------------------------------------------------------------- */
 export async function recordSale({
-  clienteDbId, items, subtotal, creditUsed, total, pointsEarned,
+  pedidoId, clienteDbId, items, subtotal, creditUsed, total, pointsEarned,
   origin, paymentMethod, address, reference,
   currentPoints, currentPurchases, currentSpent,
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const unitCount = items.reduce((s, i) => s + i.qty, 0);
 
-  const { data: pedido, error: pedidoError } = await supabase
-    .from("pedidos")
-    .insert({
-      cliente_id: clienteDbId,
-      status: "Completado",
-      items: items.map(({ dbId, ...rest }) => rest), // el detalle legible va en items; dbId solo se usa aquí abajo
-      subtotal: subtotal ?? total,
-      credit_used: creditUsed || 0,
-      total,
-      points_earned: pointsEarned,
-      origin: origin || "app",
-      payment_method: paymentMethod || "",
-      address: address || "",
-      reference: reference || "",
-      confirmed_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+  const payload = {
+    cliente_id: clienteDbId,
+    status: "Completado",
+    items: items.map(({ dbId, ...rest }) => rest), // el detalle legible va en items; dbId solo se usa aquí abajo
+    subtotal: subtotal ?? total,
+    credit_used: creditUsed || 0,
+    total,
+    points_earned: pointsEarned,
+    origin: origin || "app",
+    payment_method: paymentMethod || "",
+    address: address || "",
+    reference: reference || "",
+    confirmed_at: new Date().toISOString(),
+  };
+
+  const { data: pedido, error: pedidoError } = pedidoId != null
+    ? await supabase.from("pedidos").update(payload).eq("id", pedidoId).select("id").single()
+    : await supabase.from("pedidos").insert(payload).select("id").single();
   if (pedidoError) return { error: "No se pudo guardar el pedido en Supabase: " + pedidoError.message };
 
   for (const item of items) {

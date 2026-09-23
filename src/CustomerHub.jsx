@@ -9,6 +9,7 @@ import {
 import {
   registerCustomer, signInCustomer, signOutCustomer,
   getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin,
+  updateCustomerName,
 } from "./supabaseAuth.js";
 import { supabase } from "./supabaseClient.js";
 import { ensureClienteRow, recordSale } from "./supabaseOrders.js";
@@ -2104,9 +2105,15 @@ export default function CustomerHub() {
           />
         )}
         {view === "profile" && currentUser && (
-          <ProfileView customer={currentUser} onSave={(patch) => {
-            setCustomers((cs) => cs.map((c) => c.id === currentUser.id ? { ...c, ...patch } : c));
+          <ProfileView customer={currentUser} onSave={async (name) => {
+            if (currentUser.dbId == null) {
+              return { error: "No se pudo guardar: tu cuenta no está conectada a Supabase." };
+            }
+            const result = await updateCustomerName(currentUser.dbId, name);
+            if (result.error) return { error: result.error };
+            setCustomers((cs) => cs.map((c) => c.id === currentUser.id ? { ...c, name: result.name } : c));
             showToast("Perfil actualizado.");
+            return { ok: true };
           }} onLogout={handleLogout} />
         )}
         {view === "pointsHistory" && currentUser && (
@@ -3941,11 +3948,20 @@ function StatBox({ label, value }) {
 ============================================================================ */
 function ProfileView({ customer, onSave, onLogout }) {
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: customer.name, phone: customer.phone, email: customer.email || "" });
+  const [name, setName] = useState(customer.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
 
-  function save() {
-    onSave(form);
-    setEditing(false);
+  async function save() {
+    setSaving(true);
+    setError(null);
+    const result = await onSave(name);
+    setSaving(false);
+    if (result?.error) {
+      setError(result.error);
+    } else {
+      setEditing(false);
+    }
   }
 
   return (
@@ -3955,12 +3971,26 @@ function ProfileView({ customer, onSave, onLogout }) {
       <div className="ch-card" style={{ marginTop: 18 }}>
         {editing ? (
           <>
-            <div className="ch-input-group"><label className="ch-label">Nombre</label><input className="ch-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div className="ch-input-group"><label className="ch-label">Teléfono</label><input className="ch-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-            <div className="ch-input-group"><label className="ch-label">Email</label><input className="ch-input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+            <div className="ch-input-group"><label className="ch-label">Nombre</label><input className="ch-input" value={name} onChange={(e) => setName(e.target.value)} disabled={saving} /></div>
+            {/* Teléfono y correo NO se editan aquí: el teléfono es la llave que
+                usa el sistema para no duplicar cuentas de venta manual, y el
+                correo real de acceso vive en Supabase Auth, no en esta tabla —
+                ver la nota en updateCustomerName (supabaseAuth.js). */}
+            <div className="ch-input-group">
+              <label className="ch-label">Teléfono</label>
+              <input className="ch-input" value={customer.phone} disabled style={{ opacity: 0.6 }} />
+            </div>
+            <div className="ch-input-group">
+              <label className="ch-label">Email</label>
+              <input className="ch-input" value={customer.email || ""} disabled style={{ opacity: 0.6 }} />
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-faint)", marginTop: -6, marginBottom: 14 }}>
+              Para cambiar tu teléfono o correo, contáctanos directamente.
+            </p>
+            {error && <p style={{ fontSize: 12.5, color: "var(--rust)", marginTop: -6, marginBottom: 14 }}>{error}</p>}
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="ch-btn ch-btn-ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>Cancelar</button>
-              <button className="ch-btn ch-btn-primary" style={{ flex: 1 }} onClick={save}>Guardar</button>
+              <button className="ch-btn ch-btn-ghost" style={{ flex: 1 }} disabled={saving} onClick={() => { setEditing(false); setName(customer.name); setError(null); }}>Cancelar</button>
+              <button className="ch-btn ch-btn-primary" style={{ flex: 1 }} disabled={saving || !name.trim()} onClick={save}>{saving ? "Guardando…" : "Guardar"}</button>
             </div>
           </>
         ) : (

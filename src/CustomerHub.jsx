@@ -11,7 +11,7 @@ import {
   getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin,
 } from "./supabaseAuth.js";
 import { supabase } from "./supabaseClient.js";
-import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers } from "./supabaseOrders.js";
+import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders } from "./supabaseOrders.js";
 
 
 /* ============================================================================
@@ -1322,12 +1322,12 @@ export default function CustomerHub() {
         // Conserva cualquier pedido que solo exista en esta pestaña (por
         // ejemplo, uno que se intentó guardar en Supabase y falló) — nunca lo
         // borra, solo evita duplicarlo una vez que ya se sincronizó.
-        const localOnly = (prev[customerId] || []).filter((o) => o.dbOrderId == null || !dbIds.has(o.dbOrderId));
+        const localOnly = (prev[customerId] || []).filter((o) => o.dbOrderId == null ? !o.synced : !dbIds.has(o.dbOrderId));
         next[customerId] = [...dbOrders, ...localOnly];
       }
       return next;
     });
-    return { ok: true };
+    return { ok: true, diag: result.diag };
   }
 
   // Se carga sola apenas se entra al panel de admin (incluyendo cuando la
@@ -1350,6 +1350,23 @@ export default function CustomerHub() {
     });
     return () => { active = false; };
   }, []);
+
+  // Historial real del cliente: al abrir la app con sesión, al iniciar sesión
+  // y justo después de guardar un pedido nuevo. Sin esto "Mis pedidos" solo
+  // mostraba lo hecho en esa misma pestaña y quedaba vacío al recargar.
+  async function refreshMyOrders(customerId) {
+    const result = await loadMyOrders();
+    if (result.error) { console.warn("refreshMyOrders:", result.error); return; }
+    setOrders((prev) => {
+      const dbIds = new Set(result.orders.map((o) => o.dbOrderId));
+      const localOnly = (prev[customerId] || []).filter((o) => o.dbOrderId == null ? !o.synced : !dbIds.has(o.dbOrderId));
+      return { ...prev, [customerId]: [...result.orders, ...localOnly] };
+    });
+  }
+
+  useEffect(() => {
+    if (currentUser?.dbId) refreshMyOrders(currentUser.id);
+  }, [currentUser?.id, currentUser?.dbId]);
 
   function handleLogin(customerId) {
     setCurrentUserId(customerId);
@@ -1522,6 +1539,7 @@ export default function CustomerHub() {
       if (result.error) return fail(result.error);
 
       setOrderSyncState(customer.id, localOrderId, { dbOrderId: result.pedidoId, syncError: null, synced: true });
+      refreshMyOrders(customer.id); // trae el id real y deja el historial igual al de Supabase
     } catch (err) {
       fail("Error inesperado: " + (err?.message || String(err)));
     }
@@ -4184,6 +4202,15 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
   const history = [...stats.allOrders].sort((a, b) => (a.date < b.date ? 1 : -1));
   const [confirmingId, setConfirmingId] = useState(null);
   const [confirmError, setConfirmError] = useState(null); // { orderId, text }
+  const [syncInfo, setSyncInfo] = useState(null); // resultado de la última lectura a Supabase
+
+  async function handleRefresh() {
+    if (!onRefresh) return;
+    setSyncInfo(null);
+    const r = await onRefresh();
+    setSyncInfo(r || null);
+  }
+  useEffect(() => { handleRefresh(); }, []);
 
   async function handleConfirm(order) {
     setConfirmingId(order.id);
@@ -4201,7 +4228,7 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
         </div>
         {onRefresh && (
           <button
-            onClick={onRefresh}
+            onClick={handleRefresh}
             disabled={refreshing}
             style={{ flexShrink: 0, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 10px", fontSize: 12, color: "var(--text-dim)", cursor: refreshing ? "default" : "pointer", fontFamily: "'Inter', sans-serif" }}
           >
@@ -4214,6 +4241,22 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
         ahí se descuenta el stock real y se otorgan los puntos. Trae los pedidos reales de cualquier
         dispositivo; si acabas de recibir uno, dale "Actualizar".
       </p>
+      {syncInfo && (
+        <div style={{ fontSize: 11.5, lineHeight: 1.5, padding: "8px 10px", borderRadius: 10, marginBottom: 10, background: syncInfo.error || (syncInfo.diag && !syncInfo.diag.isAdmin) ? "rgba(196,120,95,0.08)" : "var(--surface-2)", border: "1px solid " + (syncInfo.error || (syncInfo.diag && !syncInfo.diag.isAdmin) ? "var(--rust)" : "var(--border)"), color: "var(--text-dim)", wordBreak: "break-word" }}>
+          {syncInfo.error && <>⚠️ {syncInfo.error}</>}
+          {syncInfo.diag && (
+            <>
+              {!syncInfo.diag.hasSession && <div>⚠️ Esta pestaña no tiene sesión de Supabase. Cierra sesión de admin y vuelve a entrar con correo y contraseña.</div>}
+              {syncInfo.diag.hasSession && !syncInfo.diag.isAdmin && <div>⚠️ La sesión activa no es de administrador (¿quedó una cuenta de cliente abierta en este navegador?). Cierra sesión y entra como admin.</div>}
+              <div>Supabase devolvió {syncInfo.diag.pedidosLeidos} pedido(s), {syncInfo.diag.pendientes} pendiente(s).</div>
+              {syncInfo.diag.clientesError && <div>⚠️ No se pudieron leer los clientes: {syncInfo.diag.clientesError}</div>}
+              {syncInfo.diag.pedidosLeidos === 0 && syncInfo.diag.hasSession && (
+                <div>Si en Supabase sí hay pedidos, falta el permiso de lectura para admin (corre fix-admin-lee-pedidos.sql).</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
       {stats.pendingOrders.length === 0 ? (
         <div className="ch-card"><EmptyRow text="No hay pedidos pendientes por confirmar." /></div>
       ) : stats.pendingOrders.map((order) => {

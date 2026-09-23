@@ -102,9 +102,35 @@ export async function createPendingOrder({
 ---------------------------------------------------------------------------- */
 export async function updateOrderStatus(pedidoId, status) {
   if (pedidoId == null) return { ok: true };
-  const { error } = await supabase.from("pedidos").update({ status }).eq("id", pedidoId);
-  if (error) return { error: "No se pudo actualizar el pedido en Supabase: " + error.message };
-  return { ok: true };
+  try {
+    // Solo cambia si el pedido SIGUE "Pendiente" en Supabase. Así, si otro
+    // dispositivo ya lo confirmó o canceló, no se pisa ese resultado.
+    const { data, error } = await supabase
+      .from("pedidos").update({ status }).eq("id", pedidoId).eq("status", "Pendiente").select("id");
+    if (error) return { error: "No se pudo actualizar el pedido en Supabase: " + error.message };
+    if (!data || data.length === 0) {
+      return { error: "Este pedido ya no está pendiente en Supabase (otro dispositivo pudo haberlo confirmado o cancelado). Toca Actualizar." };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { error: "Error inesperado al actualizar el pedido: " + (e?.message || String(e)) };
+  }
+}
+
+/* Guarda en Supabase los cambios de cantidades que el admin hace a un pedido
+   PENDIENTE (antes solo vivían en la pantalla y se perdían al actualizar). */
+export async function updatePendingOrderItems(pedidoId, { items, subtotal, creditUsed, total, pointsEarned }) {
+  if (pedidoId == null) return { ok: true };
+  try {
+    const { error } = await supabase.from("pedidos").update({
+      items: items.map(({ dbId, ...rest }) => rest),
+      subtotal, credit_used: creditUsed || 0, total, points_earned: pointsEarned,
+    }).eq("id", pedidoId).eq("status", "Pendiente");
+    if (error) return { error: "No se pudo guardar el cambio del pedido: " + error.message };
+    return { ok: true };
+  } catch (e) {
+    return { error: "Error inesperado al guardar el cambio: " + (e?.message || String(e)) };
+  }
 }
 
 /* ----------------------------------------------------------------------------
@@ -231,9 +257,21 @@ export async function recordSale({
     confirmed_at: new Date().toISOString(),
   };
 
-  const { data: pedido, error: pedidoError } = pedidoId != null
-    ? await supabase.from("pedidos").update(payload).eq("id", pedidoId).select("id").single()
-    : await supabase.from("pedidos").insert(payload).select("id").single();
+  // Si ya existía como pendiente, solo se confirma si SIGUE pendiente (evita
+  // confirmar dos veces —y dar puntos dos veces— desde dos dispositivos).
+  const warnings = [];
+  let pedido, pedidoError;
+  if (pedidoId != null) {
+    const res = await supabase.from("pedidos").update(payload)
+      .eq("id", pedidoId).eq("status", "Pendiente").select("id").maybeSingle();
+    pedido = res.data; pedidoError = res.error;
+    if (!pedidoError && !pedido) {
+      return { error: "Este pedido ya no está pendiente en Supabase (otro dispositivo pudo haberlo confirmado o cancelado). Toca Actualizar." };
+    }
+  } else {
+    const res = await supabase.from("pedidos").insert(payload).select("id").single();
+    pedido = res.data; pedidoError = res.error;
+  }
   if (pedidoError) return { error: "No se pudo guardar el pedido en Supabase: " + pedidoError.message };
 
   for (const item of items) {
@@ -242,11 +280,15 @@ export async function recordSale({
       .from("sabores").select("stock").eq("id", item.dbId).maybeSingle();
     if (readError || !saborRow) {
       console.warn("recordSale: no se pudo leer stock del sabor", item.dbId, readError);
+      warnings.push(`no se pudo leer el stock de "${item.name}"`);
       continue;
     }
     const nextStock = Math.max(0, (saborRow.stock || 0) - item.qty);
     const { error: stockError } = await supabase.from("sabores").update({ stock: nextStock }).eq("id", item.dbId);
-    if (stockError) console.warn("recordSale: no se pudo descontar stock del sabor", item.dbId, stockError);
+    if (stockError) {
+      console.warn("recordSale: no se pudo descontar stock del sabor", item.dbId, stockError);
+      warnings.push(`no se pudo descontar el stock de "${item.name}"`);
+    }
   }
 
   const { data: clienteRow, error: clienteError } = await supabase
@@ -260,7 +302,10 @@ export async function recordSale({
     .eq("id", clienteDbId)
     .select("points, total_purchases, total_spent, last_purchase_at")
     .single();
-  if (clienteError) console.warn("recordSale: pedido guardado pero no se pudo actualizar el cliente:", clienteError);
+  if (clienteError) {
+    console.warn("recordSale: pedido guardado pero no se pudo actualizar el cliente:", clienteError);
+    warnings.push("no se pudieron actualizar los puntos/compras del cliente");
+  }
 
   const { error: transError } = await supabase.from("transacciones").insert({
     cliente_id: clienteDbId,
@@ -272,7 +317,10 @@ export async function recordSale({
     related_order_id: pedido.id,
     created_at: today,
   });
-  if (transError) console.warn("recordSale: pedido guardado pero no se pudo registrar el movimiento de puntos:", transError);
+  if (transError) {
+    console.warn("recordSale: pedido guardado pero no se pudo registrar el movimiento de puntos:", transError);
+    warnings.push("no se registró el movimiento de puntos");
+  }
 
-  return { ok: true, pedidoId: pedido.id, cliente: clienteRow || null };
+  return { ok: true, pedidoId: pedido.id, cliente: clienteRow || null, warnings };
 }

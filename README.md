@@ -38,4 +38,4 @@ navegador para ver la app funcionando.
 El archivo `.env` de esta carpeta trae tu URL y llave pública de Supabase —
 la llave en sí es segura de compartir (está protegida por las reglas RLS que
 ya activamos), pero de cualquier forma no hace falta subir ese archivo a
-GitHub; en Vercel se configuran aparte como se explica arriba.
+GitHub; en Vercel se configuran aparte como se explica arriba. 

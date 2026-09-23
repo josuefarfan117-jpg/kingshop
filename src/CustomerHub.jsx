@@ -11,6 +11,10 @@ import {
   getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin, hasActiveAdminSession,
 } from "./supabaseAuth.js";
 import { supabase } from "./supabaseClient.js";
+import {
+  loadMyRedemptions, loadMyTransactions, redeemReward, releaseOrderCredit,
+  awardReferralIfFirstPurchase as awardReferralInDb, loadPendingRedemptions, markRedemptionFulfilled,
+} from "./supabaseRewards.js";
 import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders, updatePendingOrderItems } from "./supabaseOrders.js";
 
 
@@ -1282,28 +1286,24 @@ export default function CustomerHub() {
      página o de una venta manual por WhatsApp. `referralRewarded` garantiza
      que se pague una sola vez en la vida de esa cuenta.
   ------------------------------------------------------------------ */
-  function awardReferralIfFirstPurchase(customerId) {
+  async function awardReferralIfFirstPurchase(customerId, dbId) {
     const invitee = customers.find((c) => c.id === customerId);
     if (!invitee || !invitee.referredBy || invitee.referralRewarded) return;
-    // totalPurchases todavía no incluye la compra que se está confirmando.
-    if ((invitee.totalPurchases || 0) > 0) return;
-    const referrerId = invitee.referredBy;
-    const today = new Date().toISOString().slice(0, 10);
+    const clienteDbId = dbId ?? invitee.dbId;
+    if (clienteDbId == null) return;
+
+    // La regla real vive en la base (primera compra confirmada, una sola vez):
+    // así el premio se guarda de verdad para los dos y no se puede repetir.
+    const result = await awardReferralInDb(clienteDbId, REFERRAL_POINTS_REFERRER, REFERRAL_POINTS_REFERRED);
+    if (result.error) { console.warn("awardReferral:", result.error); showToast("⚠️ " + result.error, 7000); return; }
+    if (!result.awarded) return;
 
     setCustomers((cs) => cs.map((c) => {
-      if (c.id === referrerId) return { ...c, pointsBalance: c.pointsBalance + REFERRAL_POINTS_REFERRER };
+      if (c.dbId != null && c.dbId === result.referrerId) return { ...c, pointsBalance: c.pointsBalance + REFERRAL_POINTS_REFERRER };
       if (c.id === customerId) return { ...c, pointsBalance: c.pointsBalance + REFERRAL_POINTS_REFERRED, referralRewarded: true };
       return c;
     }));
-
-    setTransactions((t) => ({
-      ...t,
-      [referrerId]: [{ id: "t_ref_" + Date.now(), type: "referral", amount: REFERRAL_POINTS_REFERRER, description: `${invitee.name} hizo su primera compra`, relatedOrderId: null, createdAt: today }, ...(t[referrerId] || [])],
-      [customerId]: [{ id: "t_refb_" + Date.now(), type: "bonus", amount: REFERRAL_POINTS_REFERRED, description: "Bono de bienvenida por invitación", relatedOrderId: null, createdAt: today }, ...(t[customerId] || [])],
-    }));
-
-    const referrerName = customers.find((c) => c.id === referrerId)?.name;
-    showToast(`Referido acreditado: +${REFERRAL_POINTS_REFERRER} pts para ${referrerName || "el referidor"}`);
+    showToast(`Referido acreditado: +${REFERRAL_POINTS_REFERRER} pts para ${result.referrerName || "el referidor"}`, 4000);
   }
 
   // Mete (o actualiza) un cliente real de Supabase dentro del mismo arreglo
@@ -1331,9 +1331,12 @@ export default function CustomerHub() {
   // solo mostraban lo que había pasado en la pestaña donde se confirmó cada
   // pedido — vacío en cualquier otro dispositivo o después de recargar.
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [rewardsToDeliver, setRewardsToDeliver] = useState([]);
   async function refreshOrdersFromSupabase() {
     setOrdersLoading(true);
     const result = await loadOrdersWithCustomers();
+    const pendingRewards = await loadPendingRedemptions();
+    if (pendingRewards.ok) setRewardsToDeliver(pendingRewards.items);
     setOrdersLoading(false);
     if (result.error) { console.warn("refreshOrdersFromSupabase:", result.error); return result; }
 
@@ -1354,6 +1357,14 @@ export default function CustomerHub() {
       return next;
     });
     return { ok: true, diag: result.diag };
+  }
+
+  async function markRewardDelivered(canjeDbId) {
+    const r = await markRedemptionFulfilled(canjeDbId);
+    if (r.error) return r;
+    setRewardsToDeliver((list) => list.filter((x) => x.dbId !== canjeDbId));
+    showToast("Recompensa marcada como entregada");
+    return { ok: true };
   }
 
   // Se carga sola apenas se entra al panel de admin (incluyendo cuando la
@@ -1390,8 +1401,19 @@ export default function CustomerHub() {
     });
   }
 
+  // Movimientos de puntos y canjes/crédito reales del cliente, más su perfil
+  // (puntos actuales). Todo viene de Supabase: lo local solo es un reflejo.
+  async function refreshMyAccount(customerId) {
+    const [rd, tx, profile] = await Promise.all([loadMyRedemptions(), loadMyTransactions(), getActiveSessionCustomer()]);
+    if (rd.error) console.warn("refreshMyAccount:", rd.error);
+    else setRedemptions((r) => ({ ...r, [customerId]: rd.redemptions }));
+    if (tx.error) console.warn("refreshMyAccount:", tx.error);
+    else setTransactions((t) => ({ ...t, [customerId]: tx.transactions }));
+    if (profile && profile.id === customerId) upsertLocalCustomer(profile);
+  }
+
   useEffect(() => {
-    if (currentUser?.dbId) refreshMyOrders(currentUser.id);
+    if (currentUser?.dbId) { refreshMyOrders(currentUser.id); refreshMyAccount(currentUser.id); }
   }, [currentUser?.id, currentUser?.dbId]);
 
   function handleLogin(customerId) {
@@ -1566,6 +1588,7 @@ export default function CustomerHub() {
 
       setOrderSyncState(customer.id, localOrderId, { dbOrderId: result.pedidoId, syncError: null, synced: true });
       refreshMyOrders(customer.id); // trae el id real y deja el historial igual al de Supabase
+      refreshMyAccount(customer.id); // crédito apartado real
     } catch (err) {
       fail("Error inesperado: " + (err?.message || String(err)));
     }
@@ -1737,7 +1760,7 @@ export default function CustomerHub() {
 
     // Si era la primera compra de un invitado, aquí se le pagan los puntos
     // a quien lo trajo. Funciona igual si el pedido tardó semanas en cerrarse.
-    awardReferralIfFirstPurchase(customerId);
+    awardReferralIfFirstPurchase(customerId, clienteResult.dbId);
 
     // Si algo secundario no se pudo guardar (stock, puntos, movimiento), se
     // avisa claro en vez de dejar la pantalla mostrando algo que no es real.
@@ -1843,7 +1866,7 @@ export default function CustomerHub() {
     // Misma regla que en la página: si es la primera compra de alguien que
     // llegó por invitación, el referidor cobra sus puntos aunque la venta se
     // haya cerrado por WhatsApp.
-    if (existing) awardReferralIfFirstPurchase(customerId);
+    if (existing) awardReferralIfFirstPurchase(customerId, clienteResult.dbId);
 
     return { ok: true, isNew, customerId, pointsEarned, total: pricing.total };
   }
@@ -2090,7 +2113,11 @@ export default function CustomerHub() {
       }
     }
     window.clearTimeout(orderEditTimers.current[orderId]);
-    if (order.creditUsed > 0) releaseCredit(customerId, orderId);
+    if (order.creditUsed > 0) {
+      releaseCredit(customerId, orderId);
+      const rel = await releaseOrderCredit(order.dbOrderId);
+      if (rel.error) showToast("⚠️ Pedido cancelado, pero " + rel.error, 8000);
+    }
     setOrders((o) => ({
       ...o,
       [customerId]: (o[customerId] || []).map((ord) => ord.id === orderId ? { ...ord, status: "Cancelado" } : ord),
@@ -2103,31 +2130,22 @@ export default function CustomerHub() {
     if (!currentUser) { setAuthIntent("rewards"); navigate("login"); return; }
     setRedeemModal({ rewardId: reward.id, step: "confirm" });
   }
-  function confirmRedeem() {
+  // Canje real: la base descuenta los puntos, crea el canje y el movimiento en
+  // una sola operación. Solo si funciona se muestra el éxito — antes solo
+  // cambiaba la pantalla y al recargar los puntos "regresaban".
+  const [redeeming, setRedeeming] = useState(false);
+  async function confirmRedeem() {
     const reward = REWARDS.find((r) => r.id === redeemModal.rewardId);
-    if (!reward || !currentUser) return;
-    const code = "RWD-" + Math.floor(10000 + Math.random() * 89999);
-    const today = new Date().toISOString().slice(0, 10);
-    setCustomers((cs) => cs.map((c) => c.id === currentUser.id ? { ...c, pointsBalance: c.pointsBalance - reward.pointsCost } : c));
-    setTransactions((t) => ({
-      ...t,
-      [currentUser.id]: [{ id: "t_" + Date.now(), type: "redemption", amount: -reward.pointsCost, description: "Recompensa canjeada", relatedOrderId: null, createdAt: today }, ...(t[currentUser.id] || [])],
-    }));
-    // Una recompensa de crédito no se "entrega": nace como saldo disponible
-    // dentro de la cuenta y queda lista para descontarse en el próximo pedido.
-    const isCredit = typeof reward.creditValue === "number";
-    setRedemptions((r) => ({
-      ...r,
-      [currentUser.id]: [{
-        id: "rd_" + Date.now(), rewardId: reward.id, pointsUsed: reward.pointsCost, code,
-        status: isCredit ? "DISPONIBLE" : "PENDIENTE DE ENTREGA",
-        creditValue: isCredit ? reward.creditValue : null,
-        creditRemaining: isCredit ? reward.creditValue : null,
-        usedOn: [],
-        createdAt: today, fulfilledAt: null,
-      }, ...(r[currentUser.id] || [])],
-    }));
-    setRedeemModal({ rewardId: reward.id, step: "success", code });
+    if (!reward || !currentUser || redeeming) return;
+    setRedeeming(true);
+    const result = await redeemReward({ rewardId: reward.id, pointsCost: reward.pointsCost, creditValue: reward.creditValue });
+    setRedeeming(false);
+    if (result.error) {
+      showToast("⚠️ No se pudo canjear: " + result.error, 6000);
+      return;
+    }
+    await refreshMyAccount(currentUser.id);
+    setRedeemModal({ rewardId: reward.id, step: "success", code: result.redemption.code });
   }
 
   const myTransactions = currentUser ? (transactions[currentUser.id] || []) : [];
@@ -2332,6 +2350,8 @@ export default function CustomerHub() {
               onExit={revokeAdminAccess}
               onRefreshOrders={refreshOrdersFromSupabase}
               ordersLoading={ordersLoading}
+              rewardsToDeliver={rewardsToDeliver}
+              onMarkRewardDelivered={markRewardDelivered}
             />
           ) : (
             // Alguien llegó a la vista "admin" sin haber pasado el código —
@@ -4260,7 +4280,7 @@ function LockedState({ onLogin, message, cta }) {
    son demo/locales; para que reflejen a todos los clientes reales hace falta
    mover customers/orders a un backend (ver nota de arquitectura al final).
 ============================================================================ */
-function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRefresh, refreshing }) {
+function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRefresh, refreshing, rewardsToDeliver = [], onMarkRewardDelivered }) {
   const customerById = (id) => customers.find((c) => c.id === id);
   const statusColor = (s) => s === "Completado" ? "var(--green)" : s === "Cancelado" ? "var(--text-faint)" : "var(--gold)";
   const history = [...stats.allOrders].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -4389,6 +4409,37 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
           </div>
         );
       })}
+
+      {rewardsToDeliver.length > 0 && (
+        <>
+          <div className="ch-section-title" style={{ marginTop: 22 }}>Recompensas por entregar ({rewardsToDeliver.length})</div>
+          {rewardsToDeliver.map((rw) => {
+            const def = REWARDS.find((r) => r.id === rw.rewardId);
+            return (
+              <div key={rw.id} className="ch-card" style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{def?.name || rw.rewardId}</div>
+                <div style={{ fontSize: 12.5, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.5 }}>
+                  {rw.customerName}{rw.customerPhone ? ` · ${rw.customerPhone}` : ""}{rw.customerEmail ? ` · ${rw.customerEmail}` : ""}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 2 }}>Código {rw.code} · canjeada el {formatDate(rw.createdAt)}</div>
+                <button
+                  className="ch-btn ch-btn-secondary"
+                  style={{ marginTop: 10 }}
+                  onClick={async () => {
+                    const r = await onMarkRewardDelivered(rw.dbId);
+                    if (r && r.error) setConfirmError({ orderId: "reward_" + rw.id, text: r.error });
+                  }}
+                >
+                  Marcar como entregada
+                </button>
+                {confirmError?.orderId === "reward_" + rw.id && (
+                  <div style={{ color: "var(--rust)", fontSize: 12, marginTop: 8 }}>{confirmError.text}</div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
 
       <div className="ch-section-title" style={{ marginTop: 22 }}>Historial de pedidos (todos)</div>
       <div className="ch-card">
@@ -5466,7 +5517,7 @@ function AdminGateView({ onSuccess, onCancel }) {
   );
 }
 
-function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, ordersLoading }) {
+function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, ordersLoading, rewardsToDeliver, onMarkRewardDelivered }) {
   const [tab, setTab] = useState("pedidos");
   const stats = useMemo(() => computeAdminStats(customers, orders), [customers, orders]);
 
@@ -5537,6 +5588,8 @@ function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrd
           onUpdateOrderItemQty={onUpdateOrderItemQty}
           onRefresh={onRefreshOrders}
           refreshing={ordersLoading}
+          rewardsToDeliver={rewardsToDeliver}
+          onMarkRewardDelivered={onMarkRewardDelivered}
         />
       ) : tab === "venta" ? (
         <AdminManualSaleTab

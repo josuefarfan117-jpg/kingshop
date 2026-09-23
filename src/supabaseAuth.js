@@ -154,6 +154,23 @@ export async function signInAdmin(email, password) {
   return { ok: true };
 }
 
+/**
+ * ¿Este navegador ya trae una sesión REAL de administrador guardada? Se usa al
+ * recargar la página para no volver a pedir correo y contraseña: Supabase ya
+ * guarda la sesión, solo falta comprobar que sea de un admin (y no de un
+ * cliente) antes de abrir el panel.
+ */
+export async function hasActiveAdminSession() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (!data?.session) return false;
+    const { data: isAdmin, error } = await supabase.rpc("is_current_user_admin");
+    return !error && isAdmin === true;
+  } catch (e) {
+    return false;
+  }
+}
+
 export async function signOutAdmin() {
   await supabase.auth.signOut();
 }

@@ -1481,44 +1481,63 @@ export default function CustomerHub() {
     setCheckoutInfo({ paymentMethod: "", address: "", reference: "", useCredit: true });
   }
 
-  async function savePendingOrderToSupabase(customer, localOrderId, { items, subtotal, creditUsed, total, pointsEarned, delivery }) {
-    const clienteResult = await ensureClienteRow({
-      dbId: customer.dbId, phone: customer.phone, name: customer.name, origin: customer.origin,
-    });
-    if (clienteResult.error) {
-      console.warn("No se pudo guardar el pedido pendiente en Supabase:", clienteResult.error);
-      showToast("⚠️ El pedido se envió por WhatsApp pero no se sincronizó con el panel. Avisa al admin.");
-      return;
-    }
-    if (clienteResult.dbId && clienteResult.dbId !== customer.dbId) {
-      setCustomers((cs) => cs.map((c) => c.id === customer.id ? { ...c, dbId: clienteResult.dbId } : c));
-    }
-
-    const resolvedItems = items.map((item) => ({
-      ...item,
-      dbId: PRODUCTS.find((p) => p.id === item.productId)?.dbId ?? null,
-    }));
-
-    const result = await createPendingOrder({
-      clienteDbId: clienteResult.dbId,
-      items: resolvedItems,
-      subtotal, creditUsed, total, pointsEarned,
-      paymentMethod: delivery.paymentMethod, address: delivery.address, reference: delivery.reference,
-    });
-    if (result.error) {
-      console.warn("No se pudo guardar el pedido pendiente en Supabase:", result.error);
-      showToast("⚠️ El pedido se envió por WhatsApp pero no se sincronizó con el panel. Avisa al admin.");
-      return;
-    }
-
-    // Solo le pega el id real de Supabase al pedido local que ya está en
-    // pantalla (para que confirmarlo/cancelarlo después actualice el mismo
-    // renglón en vez de crear uno nuevo) — no toca nada más de lo que el
-    // cliente ya está viendo.
+  // Actualiza campos de sincronización (dbOrderId / syncError) de un pedido
+  // local, sin tocar nada más de lo que el cliente ya está viendo.
+  function setOrderSyncState(customerId, localOrderId, patch) {
     setOrders((o) => ({
       ...o,
-      [customer.id]: (o[customer.id] || []).map((ord) => ord.id === localOrderId ? { ...ord, dbOrderId: result.pedidoId } : ord),
+      [customerId]: (o[customerId] || []).map((ord) => ord.id === localOrderId ? { ...ord, ...patch } : ord),
     }));
+  }
+
+  async function savePendingOrderToSupabase(customer, localOrderId, { items, subtotal, creditUsed, total, pointsEarned, delivery }) {
+    // Cualquier falla (incluso una excepción inesperada) deja el motivo
+    // guardado EN el pedido, para verlo en "Mis pedidos" aunque el aviso
+    // flotante ya haya desaparecido.
+    const fail = (msg) => {
+      console.warn("No se pudo guardar el pedido pendiente en Supabase:", msg);
+      setOrderSyncState(customer.id, localOrderId, { syncError: msg });
+      showToast("⚠️ El pedido se envió por WhatsApp pero no se sincronizó con el panel. Revisa Mis pedidos.");
+    };
+    try {
+      const clienteResult = await ensureClienteRow({
+        dbId: customer.dbId, phone: customer.phone, name: customer.name, origin: customer.origin,
+      });
+      if (clienteResult.error) return fail(clienteResult.error);
+      if (clienteResult.dbId && clienteResult.dbId !== customer.dbId) {
+        setCustomers((cs) => cs.map((c) => c.id === customer.id ? { ...c, dbId: clienteResult.dbId } : c));
+      }
+
+      const resolvedItems = items.map((item) => ({
+        ...item,
+        dbId: PRODUCTS.find((p) => p.id === item.productId)?.dbId ?? null,
+      }));
+
+      const result = await createPendingOrder({
+        clienteDbId: clienteResult.dbId,
+        items: resolvedItems,
+        subtotal, creditUsed, total, pointsEarned,
+        paymentMethod: delivery.paymentMethod, address: delivery.address, reference: delivery.reference,
+      });
+      if (result.error) return fail(result.error);
+
+      setOrderSyncState(customer.id, localOrderId, { dbOrderId: result.pedidoId, syncError: null, synced: true });
+    } catch (err) {
+      fail("Error inesperado: " + (err?.message || String(err)));
+    }
+  }
+
+  // Botón "Reintentar" de Mis pedidos: vuelve a mandar al panel un pedido que
+  // no se pudo sincronizar la primera vez.
+  function retryOrderSync(order) {
+    if (!currentUser) return;
+    setOrderSyncState(currentUser.id, order.id, { syncError: null });
+    showToast("Reintentando sincronizar el pedido…");
+    savePendingOrderToSupabase(currentUser, order.id, {
+      items: order.items, subtotal: order.subtotal, creditUsed: order.creditUsed || 0,
+      total: order.total, pointsEarned: order.pointsEarned,
+      delivery: { paymentMethod: order.paymentMethod, address: order.address, reference: order.reference },
+    });
   }
 
   /* ------------------------------------------------------------------
@@ -2176,7 +2195,7 @@ export default function CustomerHub() {
           <OrderSuccessView order={lastOrder} onDone={() => navigate(lastOrder.guest ? "catalog" : "orders")} />
         )}
         {view === "orders" && currentUser && (
-          <OrdersView orders={myOrders} transactions={myTransactions} onGoHistory={() => navigate("pointsHistory")} />
+          <OrdersView orders={myOrders} transactions={myTransactions} onGoHistory={() => navigate("pointsHistory")} onRetrySync={retryOrderSync} />
         )}
         {view === "referrals" && currentUser && myReferralStats && (
           <ReferralsView
@@ -3875,7 +3894,7 @@ function OrderSuccessView({ order, onDone }) {
 /* ============================================================================
    PEDIDOS
 ============================================================================ */
-function OrdersView({ orders, transactions, onGoHistory }) {
+function OrdersView({ orders, transactions, onGoHistory, onRetrySync }) {
   return (
     <div style={{ paddingTop: 20 }}>
       <h1 className="ch-serif" style={{ fontSize: 24 }}>Mis pedidos</h1>
@@ -3917,6 +3936,15 @@ function OrdersView({ orders, transactions, onGoHistory }) {
                 <div style={{ padding: "8px 0 0" }}>
                   <div style={{ color: "var(--text-dim)", fontSize: 12.5, marginBottom: 3 }}>Dirección</div>
                   <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>{o.address}{o.reference ? ` · ${o.reference}` : ""}</div>
+                </div>
+              )}
+              {o.syncError && o.status === "Pendiente" && !o.dbOrderId && (
+                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(196,120,95,0.08)", border: "1px solid var(--rust)" }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--rust)" }}>⚠️ No se sincronizó con el panel</div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.45, wordBreak: "break-word" }}>{o.syncError}</div>
+                  {onRetrySync && (
+                    <button onClick={() => onRetrySync(o)} className="ch-btn ch-btn-secondary" style={{ marginTop: 8 }}>Reintentar</button>
+                  )}
                 </div>
               )}
             </div>

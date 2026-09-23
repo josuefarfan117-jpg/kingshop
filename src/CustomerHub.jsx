@@ -11,7 +11,7 @@ import {
   getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin,
 } from "./supabaseAuth.js";
 import { supabase } from "./supabaseClient.js";
-import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders } from "./supabaseOrders.js";
+import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders, updatePendingOrderItems } from "./supabaseOrders.js";
 
 
 /* ============================================================================
@@ -1200,10 +1200,10 @@ export default function CustomerHub() {
     });
   }
 
-  function showToast(msg) {
+  function showToast(msg, ms = 2200) {
     setToast(msg);
     window.clearTimeout(showToast._t);
-    showToast._t = window.setTimeout(() => setToast(null), 2200);
+    showToast._t = window.setTimeout(() => setToast(null), ms);
   }
 
   const PROTECTED = ["dashboard", "pointsHistory", "orders", "referrals", "profile", "myRewards"];
@@ -1603,7 +1603,25 @@ export default function CustomerHub() {
 
   /* -------------------- Acciones del panel de administrador -------------------- */
 
+  // Guarda en Supabase (con pequeña espera para agrupar clics seguidos en +/–)
+  // el estado más reciente del pedido pendiente que el admin está ajustando.
+  const orderEditTimers = useRef({});
+  const ordersLatest = useRef(orders);
+  ordersLatest.current = orders;
+  function persistOrderEdit(customerId, orderId) {
+    window.clearTimeout(orderEditTimers.current[orderId]);
+    orderEditTimers.current[orderId] = window.setTimeout(async () => {
+      const ord = (ordersLatest.current[customerId] || []).find((o) => o.id === orderId);
+      if (!ord || ord.dbOrderId == null || ord.status !== "Pendiente") return;
+      const r = await updatePendingOrderItems(ord.dbOrderId, {
+        items: ord.items, subtotal: ord.subtotal, creditUsed: ord.creditUsed, total: ord.total, pointsEarned: ord.pointsEarned,
+      });
+      if (r.error) { console.warn("persistOrderEdit:", r.error); showToast("⚠️ " + r.error, 6000); }
+    }, 600);
+  }
+
   function updateOrderItemQty(customerId, orderId, itemIndex, newQty) {
+    persistOrderEdit(customerId, orderId);
     setOrders((o) => ({
       ...o,
       [customerId]: (o[customerId] || []).map((ord) => {
@@ -1656,6 +1674,7 @@ export default function CustomerHub() {
       currentSpent: customer.totalSpent,
     });
     if (saleResult.error) return { ok: false, error: saleResult.error };
+    window.clearTimeout(orderEditTimers.current[orderId]);
 
     const today = new Date().toISOString().slice(0, 10);
 
@@ -1694,6 +1713,11 @@ export default function CustomerHub() {
     // a quien lo trajo. Funciona igual si el pedido tardó semanas en cerrarse.
     awardReferralIfFirstPurchase(customerId);
 
+    // Si algo secundario no se pudo guardar (stock, puntos, movimiento), se
+    // avisa claro en vez de dejar la pantalla mostrando algo que no es real.
+    if (saleResult.warnings && saleResult.warnings.length > 0) {
+      showToast("⚠️ Pedido confirmado, pero " + saleResult.warnings.join("; ") + ". Revisa los permisos en Supabase.", 9000);
+    }
     return { ok: true };
   }
 
@@ -1762,6 +1786,9 @@ export default function CustomerHub() {
       currentSpent: currentCustomer.totalSpent,
     });
     if (saleResult.error) return { ok: false, error: saleResult.error };
+    if (saleResult.warnings && saleResult.warnings.length > 0) {
+      showToast("⚠️ Venta guardada, pero " + saleResult.warnings.join("; ") + ". Revisa los permisos en Supabase.", 9000);
+    }
 
     // Mismo punto único de control que confirmOrder: descuenta del mismo stock real.
     setStockLevels((s) => {
@@ -2021,18 +2048,29 @@ export default function CustomerHub() {
     return { ok: true, offline: product.dbId == null };
   }
 
-  function cancelOrder(customerId, orderId) {
+  // Cancela un pedido pendiente. Primero se guarda en Supabase y SOLO si eso
+  // funciona se refleja en pantalla — así nunca se ve "Cancelado" algo que
+  // en la base sigue pendiente (y reaparece al actualizar).
+  async function cancelOrder(customerId, orderId) {
     const order = (orders[customerId] || []).find((o) => o.id === orderId);
-    if (order?.creditUsed > 0) releaseCredit(customerId, orderId);
+    if (!order) return { ok: false, error: "No se encontró el pedido." };
+    if (order.status !== "Pendiente") return { ok: false, error: "Este pedido ya no está pendiente." };
+
+    if (order.dbOrderId != null) {
+      const r = await updateOrderStatus(order.dbOrderId, "Cancelado");
+      if (r.error) {
+        console.warn("cancelOrder:", r.error);
+        return { ok: false, error: r.error };
+      }
+    }
+    window.clearTimeout(orderEditTimers.current[orderId]);
+    if (order.creditUsed > 0) releaseCredit(customerId, orderId);
     setOrders((o) => ({
       ...o,
       [customerId]: (o[customerId] || []).map((ord) => ord.id === orderId ? { ...ord, status: "Cancelado" } : ord),
     }));
-    if (order?.dbOrderId != null) {
-      updateOrderStatus(order.dbOrderId, "Cancelado").then((r) => {
-        if (r.error) console.warn("cancelOrder:", r.error);
-      });
-    }
+    showToast("Pedido cancelado");
+    return { ok: true };
   }
 
   function openRedeem(reward) {
@@ -4212,6 +4250,15 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
   }
   useEffect(() => { handleRefresh(); }, []);
 
+  async function handleCancel(order) {
+    if (!window.confirm("¿Cancelar este pedido? No se descuenta stock ni se dan puntos.")) return;
+    setConfirmingId(order.id);
+    setConfirmError(null);
+    const result = await onCancelOrder(order.customerId, order.id);
+    setConfirmingId(null);
+    if (!result?.ok) setConfirmError({ orderId: order.id, text: result?.error || "No se pudo cancelar el pedido." });
+  }
+
   async function handleConfirm(order) {
     setConfirmingId(order.id);
     setConfirmError(null);
@@ -4308,7 +4355,7 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
               <div style={{ color: "var(--rust)", fontSize: 12, marginTop: 8 }}>{confirmError.text}</div>
             )}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button className="ch-btn ch-btn-ghost" style={{ flex: 1 }} disabled={confirmingId === order.id} onClick={() => onCancelOrder(order.customerId, order.id)}>Cancelar</button>
+              <button className="ch-btn ch-btn-ghost" style={{ flex: 1 }} disabled={confirmingId === order.id} onClick={() => handleCancel(order)}>Cancelar</button>
               <button className="ch-btn ch-btn-primary" style={{ flex: 1 }} disabled={confirmingId === order.id} onClick={() => handleConfirm(order)}>
                 {confirmingId === order.id ? "Confirmando…" : "Confirmar pagado"}
               </button>

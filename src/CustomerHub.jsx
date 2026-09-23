@@ -17,6 +17,45 @@ import {
 } from "./supabaseRewards.js";
 import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders, updatePendingOrderItems } from "./supabaseOrders.js";
 
+/* ----------------------------------------------------------------------------
+   CAMPANITA DE PEDIDOS NUEVOS (panel admin)
+   Sonido generado con Web Audio (sin archivos). Los navegadores solo dejan
+   sonar audio después de que la persona tocó algo en la página, por eso el
+   contexto se "desbloquea" con el primer toque en el panel (ver unlockBell).
+---------------------------------------------------------------------------- */
+let _bellCtx = null;
+function unlockBell() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!_bellCtx) _bellCtx = new AC();
+    if (_bellCtx.state === "suspended") _bellCtx.resume();
+  } catch (e) { /* sin audio, no pasa nada */ }
+}
+function playBell(times = 3) {
+  try {
+    unlockBell();
+    if (!_bellCtx || _bellCtx.state !== "running") return false;
+    const ctx = _bellCtx;
+    for (let i = 0; i < times; i++) {
+      const t0 = ctx.currentTime + i * 0.55;
+      [880, 1320].forEach((freq, k) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(k === 0 ? 0.35 : 0.18, t0 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(t0); osc.stop(t0 + 0.52);
+      });
+    }
+    return true;
+  } catch (e) { return false; }
+}
+const ADMIN_POLL_MS = 20000; // cada cuánto revisa pedidos nuevos el panel
+
 
 /* ============================================================================
    MODELOS DE DATOS (forma prevista para una futura API/backend)
@@ -1332,13 +1371,49 @@ export default function CustomerHub() {
   // pedido — vacío en cualquier otro dispositivo o después de recargar.
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [rewardsToDeliver, setRewardsToDeliver] = useState([]);
-  async function refreshOrdersFromSupabase() {
-    setOrdersLoading(true);
+  const [adminSoundOn, setAdminSoundOn] = useState(() => {
+    try { return window.localStorage.getItem("king_admin_sound") !== "off"; } catch (e) { return true; }
+  });
+  const adminSoundRef = useRef(adminSoundOn);
+  adminSoundRef.current = adminSoundOn;
+  function toggleAdminSound() {
+    const next = !adminSoundOn;
+    setAdminSoundOn(next);
+    try { window.localStorage.setItem("king_admin_sound", next ? "on" : "off"); } catch (e) { /* ok */ }
+    if (next) { unlockBell(); playBell(1); }
+  }
+  const seenPendingRef = useRef(null);      // ids de pedidos pendientes ya vistos (null = aún no se ha cargado nada)
+  const seenRewardsRef = useRef(null);      // ídem para recompensas por entregar
+  const refreshingRef = useRef(false);      // evita dos lecturas al mismo tiempo
+  const [newOrdersBadge, setNewOrdersBadge] = useState(0);
+  async function refreshOrdersFromSupabase({ silent = false } = {}) {
+    if (refreshingRef.current) return { ok: true, skipped: true };
+    refreshingRef.current = true;
+    if (!silent) setOrdersLoading(true);
     const result = await loadOrdersWithCustomers();
     const pendingRewards = await loadPendingRedemptions();
     if (pendingRewards.ok) setRewardsToDeliver(pendingRewards.items);
-    setOrdersLoading(false);
+    if (!silent) setOrdersLoading(false);
+    refreshingRef.current = false;
     if (result.error) { console.warn("refreshOrdersFromSupabase:", result.error); return result; }
+
+    // Aviso de pedidos nuevos: compara contra lo ya visto. La primera lectura
+    // solo memoriza (no suena por pedidos que ya estaban ahí).
+    const pendingNow = new Set(result.orders.filter((o) => o.status === "Pendiente").map((o) => o.dbOrderId));
+    const rewardsNow = new Set((pendingRewards.ok ? pendingRewards.items : []).map((r) => r.dbId));
+    if (seenPendingRef.current !== null) {
+      const freshOrders = [...pendingNow].filter((id) => !seenPendingRef.current.has(id)).length;
+      const freshRewards = seenRewardsRef.current ? [...rewardsNow].filter((id) => !seenRewardsRef.current.has(id)).length : 0;
+      if (freshOrders + freshRewards > 0) {
+        setNewOrdersBadge((n) => n + freshOrders + freshRewards);
+        if (adminSoundRef.current) playBell(3);
+        showToast(freshOrders > 0
+          ? `🔔 ${freshOrders === 1 ? "Pedido nuevo" : freshOrders + " pedidos nuevos"} por confirmar`
+          : "🔔 Nueva recompensa por entregar", 6000);
+      }
+    }
+    seenPendingRef.current = pendingNow;
+    seenRewardsRef.current = rewardsNow;
 
     for (const customer of result.customers) upsertLocalCustomer(customer);
 
@@ -1374,6 +1449,34 @@ export default function CustomerHub() {
   useEffect(() => {
     if (adminAuthed) refreshOrdersFromSupabase();
   }, [adminAuthed]);
+
+  // Refresco automático del panel: cada ADMIN_POLL_MS revisa Supabase sin
+  // mostrar "Actualizando…", y al volver a la pestaña revisa de inmediato.
+  useEffect(() => {
+    if (!adminAuthed) { seenPendingRef.current = null; seenRewardsRef.current = null; return; }
+    const unlock = () => unlockBell();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    const timer = window.setInterval(() => refreshOrdersFromSupabase({ silent: true }), ADMIN_POLL_MS);
+    const onVisible = () => { if (!document.hidden) refreshOrdersFromSupabase({ silent: true }); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pointerdown", unlock);
+    };
+  }, [adminAuthed]);
+
+  // Número de pedidos nuevos en el título de la pestaña (se limpia al mirar el panel).
+  useEffect(() => {
+    const base = "The King Shop";
+    document.title = newOrdersBadge > 0 ? `(${newOrdersBadge}) 🔔 ${base}` : base;
+  }, [newOrdersBadge]);
+  useEffect(() => {
+    if (view === "admin" && newOrdersBadge > 0 && !document.hidden) {
+      const t = window.setTimeout(() => setNewOrdersBadge(0), 4000);
+      return () => window.clearTimeout(t);
+    }
+  }, [view, newOrdersBadge]);
 
   // Al abrir la app: si el navegador ya tenía una sesión iniciada (no cerró
   // sesión la última vez), la recuperamos solos, sin que tenga que volver a
@@ -2348,7 +2451,9 @@ export default function CustomerHub() {
               onAddFlavor={addFlavor}
               onDeleteFlavor={deleteFlavor}
               onExit={revokeAdminAccess}
-              onRefreshOrders={refreshOrdersFromSupabase}
+              onRefreshOrders={() => refreshOrdersFromSupabase()}
+              soundOn={adminSoundOn}
+              onToggleSound={toggleAdminSound}
               ordersLoading={ordersLoading}
               rewardsToDeliver={rewardsToDeliver}
               onMarkRewardDelivered={markRewardDelivered}
@@ -4280,7 +4385,7 @@ function LockedState({ onLogin, message, cta }) {
    son demo/locales; para que reflejen a todos los clientes reales hace falta
    mover customers/orders a un backend (ver nota de arquitectura al final).
 ============================================================================ */
-function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRefresh, refreshing, rewardsToDeliver = [], onMarkRewardDelivered }) {
+function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRefresh, refreshing, soundOn, onToggleSound, rewardsToDeliver = [], onMarkRewardDelivered }) {
   const customerById = (id) => customers.find((c) => c.id === id);
   const statusColor = (s) => s === "Completado" ? "var(--green)" : s === "Cancelado" ? "var(--text-faint)" : "var(--gold)";
   const history = [...stats.allOrders].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -4315,24 +4420,36 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginTop: 18 }}>
-        <div className="ch-section-title" style={{ marginTop: 0 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 18, marginBottom: 10 }}>
+        <div className="ch-section-title" style={{ marginTop: 0, marginBottom: 0, flex: "1 1 160px", minWidth: 0 }}>
           Pedidos por confirmar {stats.pendingOrders.length > 0 && `(${stats.pendingOrders.length})`}
         </div>
-        {onRefresh && (
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            style={{ flexShrink: 0, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 10px", fontSize: 12, color: "var(--text-dim)", cursor: refreshing ? "default" : "pointer", fontFamily: "'Inter', sans-serif" }}
-          >
-            {refreshing ? "Actualizando…" : "Actualizar"}
-          </button>
-        )}
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          {onToggleSound && (
+            <button
+              onClick={onToggleSound}
+              title={soundOn ? "Sonido de pedidos nuevos activado" : "Sonido silenciado"}
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 10px", fontSize: 12, color: "var(--text-dim)", cursor: "pointer", fontFamily: "'Inter', sans-serif", whiteSpace: "nowrap" }}
+            >
+              {soundOn ? "🔔 Sonido" : "🔕 Silencio"}
+            </button>
+          )}
+          {onRefresh && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 10px", fontSize: 12, color: "var(--text-dim)", cursor: refreshing ? "default" : "pointer", fontFamily: "'Inter', sans-serif", whiteSpace: "nowrap" }}
+            >
+              {refreshing ? "Actualizando…" : "Actualizar"}
+            </button>
+          )}
+        </div>
       </div>
       <p style={{ color: "var(--text-faint)", fontSize: 12, marginTop: -6, marginBottom: 10 }}>
         Ajusta cantidades si algo cambió en WhatsApp, y confirma solo cuando el pago ya se haya recibido —
-        ahí se descuenta el stock real y se otorgan los puntos. Trae los pedidos reales de cualquier
-        dispositivo; si acabas de recibir uno, dale "Actualizar".
+        ahí se descuenta el stock real y se otorgan los puntos. El panel se actualiza solo cada
+        20 segundos y suena una campanita cuando llega un pedido nuevo (toca cualquier parte de la
+        página una vez para que el navegador permita el sonido).
       </p>
       {syncInfo && (
         <div style={{ fontSize: 11.5, lineHeight: 1.5, padding: "8px 10px", borderRadius: 10, marginBottom: 10, background: syncInfo.error || (syncInfo.diag && !syncInfo.diag.isAdmin) ? "rgba(196,120,95,0.08)" : "var(--surface-2)", border: "1px solid " + (syncInfo.error || (syncInfo.diag && !syncInfo.diag.isAdmin) ? "var(--rust)" : "var(--border)"), color: "var(--text-dim)", wordBreak: "break-word" }}>
@@ -5517,7 +5634,7 @@ function AdminGateView({ onSuccess, onCancel }) {
   );
 }
 
-function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, ordersLoading, rewardsToDeliver, onMarkRewardDelivered }) {
+function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, soundOn, onToggleSound, ordersLoading, rewardsToDeliver, onMarkRewardDelivered }) {
   const [tab, setTab] = useState("pedidos");
   const stats = useMemo(() => computeAdminStats(customers, orders), [customers, orders]);
 
@@ -5587,6 +5704,8 @@ function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrd
           onCancelOrder={onCancelOrder}
           onUpdateOrderItemQty={onUpdateOrderItemQty}
           onRefresh={onRefreshOrders}
+          soundOn={soundOn}
+          onToggleSound={onToggleSound}
           refreshing={ordersLoading}
           rewardsToDeliver={rewardsToDeliver}
           onMarkRewardDelivered={onMarkRewardDelivered}

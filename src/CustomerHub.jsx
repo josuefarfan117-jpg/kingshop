@@ -9,10 +9,9 @@ import {
 import {
   registerCustomer, signInCustomer, signOutCustomer,
   getActiveSessionCustomer, findReferrerByCode, signInAdmin, signOutAdmin,
-  updateCustomerName,
 } from "./supabaseAuth.js";
 import { supabase } from "./supabaseClient.js";
-import { ensureClienteRow, recordSale } from "./supabaseOrders.js";
+import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers } from "./supabaseOrders.js";
 
 
 /* ============================================================================
@@ -28,7 +27,7 @@ import { ensureClienteRow, recordSale } from "./supabaseOrders.js";
 const POINTS_PER_PURCHASE_RATE = 0.2; // DEMO: 1 MXN gastado ≈ 0.2 puntos. Configurable.
 
 // Número real de WhatsApp del negocio — el botón "Hacer pedido" abre el chat aquí.
-const WHATSAPP_NUMBER = "523320465574";
+const WHATSAPP_NUMBER = "523314862857";
 function waLink(text) {
   return `https://wa.me/${WHATSAPP_NUMBER}${text ? "?text=" + encodeURIComponent(text) : ""}`;
 }
@@ -555,11 +554,7 @@ const PROMOTIONS = [
   // aplica al calcular puntos), así que se apaga aquí en vez de borrarla —
   // cuando esa lógica exista, basta con volver a poner active: true.
   { id: "pr1", title: "Puntos dobles esta semana", description: "Todas tus compras suman el doble de puntos hasta el domingo.", startDate: "2026-09-14", endDate: "2026-09-20", type: "bonus", value: "2x", active: false },
-  // Desactivada: el envío nunca es gratis (se cotiza aparte, ver ch-eyebrow
-  // "El costo de envío no está incluido"), así que este mensaje contradecía
-  // al resto de la app. Se apaga aquí en vez de borrarla por si algún día
-  // se decide ofrecer envío gratis de verdad.
-  { id: "pr2", title: "Envío sin costo +$600", description: "Pedidos mayores a $600 no pagan envío.", startDate: "2026-09-01", endDate: "2026-09-30", type: "shipping", value: "$0", active: false },
+  { id: "pr2", title: "Envío sin costo +$600", description: "Pedidos mayores a $600 no pagan envío.", startDate: "2026-09-01", endDate: "2026-09-30", type: "shipping", value: "$0", active: true },
 ];
 
 export function makeCustomer(over) {
@@ -1303,6 +1298,46 @@ export default function CustomerHub() {
     setReferrals((r) => ({ ...r, [customer.id]: r[customer.id] || { invited: 0 } }));
   }
 
+  // Trae TODOS los pedidos reales (pendientes y completados, de cualquier
+  // cliente, hechos desde cualquier dispositivo) directo de Supabase y los
+  // mete al mismo estado `orders`/`customers` que ya usaba toda la app. Sin
+  // esto, "Pedidos por confirmar", el historial y las estadísticas del panel
+  // solo mostraban lo que había pasado en la pestaña donde se confirmó cada
+  // pedido — vacío en cualquier otro dispositivo o después de recargar.
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  async function refreshOrdersFromSupabase() {
+    setOrdersLoading(true);
+    const result = await loadOrdersWithCustomers();
+    setOrdersLoading(false);
+    if (result.error) { console.warn("refreshOrdersFromSupabase:", result.error); return result; }
+
+    for (const customer of result.customers) upsertLocalCustomer(customer);
+
+    setOrders((prev) => {
+      const next = { ...prev };
+      const byCustomer = {};
+      for (const order of result.orders) (byCustomer[order.customerId] ||= []).push(order);
+      for (const [customerId, dbOrders] of Object.entries(byCustomer)) {
+        const dbIds = new Set(dbOrders.map((o) => o.dbOrderId));
+        // Conserva cualquier pedido que solo exista en esta pestaña (por
+        // ejemplo, uno que se intentó guardar en Supabase y falló) — nunca lo
+        // borra, solo evita duplicarlo una vez que ya se sincronizó.
+        const localOnly = (prev[customerId] || []).filter((o) => o.dbOrderId == null || !dbIds.has(o.dbOrderId));
+        next[customerId] = [...dbOrders, ...localOnly];
+      }
+      return next;
+    });
+    return { ok: true };
+  }
+
+  // Se carga sola apenas se entra al panel de admin (incluyendo cuando la
+  // sesión de admin ya venía guardada de antes y la pantalla abre directo en
+  // "admin" tras recargar) — así el admin nunca tiene que adivinar si lo que
+  // ve es la realidad o solo lo que pasó en su propia pestaña.
+  useEffect(() => {
+    if (adminAuthed) refreshOrdersFromSupabase();
+  }, [adminAuthed]);
+
   // Al abrir la app: si el navegador ya tenía una sesión iniciada (no cerró
   // sesión la última vez), la recuperamos solos, sin que tenga que volver a
   // escribir su correo y contraseña.
@@ -1427,14 +1462,55 @@ export default function CustomerHub() {
       // cantidades/sabores al negociar por WhatsApp.
       setOrders((o) => ({
         ...o,
-        [currentUser.id]: [{ id: orderId, date: today, subtotal, creditUsed, total, status: "Pendiente", pointsEarned, items, origin: "app", ...delivery }, ...(o[currentUser.id] || [])],
+        [currentUser.id]: [{ id: orderId, date: today, subtotal, creditUsed, total, status: "Pendiente", pointsEarned, items, origin: "app", dbOrderId: null, ...delivery }, ...(o[currentUser.id] || [])],
       }));
       setLastOrder({ items, pricing, subtotal, creditUsed, total, pointsEarned, date: today, ...delivery });
+      // Guarda el pedido en Supabase en segundo plano — sin bloquear la
+      // redirección a WhatsApp que sigue justo después de esto. Así, aunque
+      // el cliente nunca vuelva a abrir esta pestaña, el pedido ya le
+      // aparece al admin en "Pedidos por confirmar" desde cualquier
+      // dispositivo (antes solo vivía en la memoria del navegador del
+      // cliente). Si falla, el pedido sigue visible aquí igual — solo se
+      // avisa en consola para depurar, no se le muestra un error al cliente
+      // porque su pedido de todas formas ya se mandó por WhatsApp.
+      savePendingOrderToSupabase(currentUser, orderId, { items, subtotal, creditUsed, total, pointsEarned, delivery });
     } else {
       setLastOrder({ items: cartList.map((i) => ({ name: i.product.name, qty: i.qty })), pricing, subtotal: pricing.total, creditUsed: 0, total: pricing.total, pointsEarned: null, date: today, guest: true, ...delivery });
     }
     setCart({});
     setCheckoutInfo({ paymentMethod: "", address: "", reference: "", useCredit: true });
+  }
+
+  async function savePendingOrderToSupabase(customer, localOrderId, { items, subtotal, creditUsed, total, pointsEarned, delivery }) {
+    const clienteResult = await ensureClienteRow({
+      dbId: customer.dbId, phone: customer.phone, name: customer.name, origin: customer.origin,
+    });
+    if (clienteResult.error) { console.warn("No se pudo guardar el pedido pendiente en Supabase:", clienteResult.error); return; }
+    if (clienteResult.dbId && clienteResult.dbId !== customer.dbId) {
+      setCustomers((cs) => cs.map((c) => c.id === customer.id ? { ...c, dbId: clienteResult.dbId } : c));
+    }
+
+    const resolvedItems = items.map((item) => ({
+      ...item,
+      dbId: PRODUCTS.find((p) => p.id === item.productId)?.dbId ?? null,
+    }));
+
+    const result = await createPendingOrder({
+      clienteDbId: clienteResult.dbId,
+      items: resolvedItems,
+      subtotal, creditUsed, total, pointsEarned,
+      paymentMethod: delivery.paymentMethod, address: delivery.address, reference: delivery.reference,
+    });
+    if (result.error) { console.warn("No se pudo guardar el pedido pendiente en Supabase:", result.error); return; }
+
+    // Solo le pega el id real de Supabase al pedido local que ya está en
+    // pantalla (para que confirmarlo/cancelarlo después actualice el mismo
+    // renglón en vez de crear uno nuevo) — no toca nada más de lo que el
+    // cliente ya está viendo.
+    setOrders((o) => ({
+      ...o,
+      [customer.id]: (o[customer.id] || []).map((ord) => ord.id === localOrderId ? { ...ord, dbOrderId: result.pedidoId } : ord),
+    }));
   }
 
   /* ------------------------------------------------------------------
@@ -1519,6 +1595,7 @@ export default function CustomerHub() {
     if (clienteResult.error) return { ok: false, error: clienteResult.error };
 
     const saleResult = await recordSale({
+      pedidoId: order.dbOrderId ?? null,
       clienteDbId: clienteResult.dbId,
       items: resolvedItems,
       subtotal: order.subtotal,
@@ -1549,7 +1626,7 @@ export default function CustomerHub() {
 
     setOrders((o) => ({
       ...o,
-      [customerId]: (o[customerId] || []).map((ord) => ord.id === orderId ? { ...ord, status: "Completado" } : ord),
+      [customerId]: (o[customerId] || []).map((ord) => ord.id === orderId ? { ...ord, status: "Completado", dbOrderId: saleResult.pedidoId ?? ord.dbOrderId } : ord),
     }));
 
     setCustomers((cs) => cs.map((c) => c.id === customerId
@@ -1906,6 +1983,11 @@ export default function CustomerHub() {
       ...o,
       [customerId]: (o[customerId] || []).map((ord) => ord.id === orderId ? { ...ord, status: "Cancelado" } : ord),
     }));
+    if (order?.dbOrderId != null) {
+      updateOrderStatus(order.dbOrderId, "Cancelado").then((r) => {
+        if (r.error) console.warn("cancelOrder:", r.error);
+      });
+    }
   }
 
   function openRedeem(reward) {
@@ -2105,15 +2187,9 @@ export default function CustomerHub() {
           />
         )}
         {view === "profile" && currentUser && (
-          <ProfileView customer={currentUser} onSave={async (name) => {
-            if (currentUser.dbId == null) {
-              return { error: "No se pudo guardar: tu cuenta no está conectada a Supabase." };
-            }
-            const result = await updateCustomerName(currentUser.dbId, name);
-            if (result.error) return { error: result.error };
-            setCustomers((cs) => cs.map((c) => c.id === currentUser.id ? { ...c, name: result.name } : c));
+          <ProfileView customer={currentUser} onSave={(patch) => {
+            setCustomers((cs) => cs.map((c) => c.id === currentUser.id ? { ...c, ...patch } : c));
             showToast("Perfil actualizado.");
-            return { ok: true };
           }} onLogout={handleLogout} />
         )}
         {view === "pointsHistory" && currentUser && (
@@ -2145,6 +2221,8 @@ export default function CustomerHub() {
               onAddFlavor={addFlavor}
               onDeleteFlavor={deleteFlavor}
               onExit={revokeAdminAccess}
+              onRefreshOrders={refreshOrdersFromSupabase}
+              ordersLoading={ordersLoading}
             />
           ) : (
             // Alguien llegó a la vista "admin" sin haber pasado el código —
@@ -3948,20 +4026,11 @@ function StatBox({ label, value }) {
 ============================================================================ */
 function ProfileView({ customer, onSave, onLogout }) {
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(customer.name);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
+  const [form, setForm] = useState({ name: customer.name, phone: customer.phone, email: customer.email || "" });
 
-  async function save() {
-    setSaving(true);
-    setError(null);
-    const result = await onSave(name);
-    setSaving(false);
-    if (result?.error) {
-      setError(result.error);
-    } else {
-      setEditing(false);
-    }
+  function save() {
+    onSave(form);
+    setEditing(false);
   }
 
   return (
@@ -3971,26 +4040,12 @@ function ProfileView({ customer, onSave, onLogout }) {
       <div className="ch-card" style={{ marginTop: 18 }}>
         {editing ? (
           <>
-            <div className="ch-input-group"><label className="ch-label">Nombre</label><input className="ch-input" value={name} onChange={(e) => setName(e.target.value)} disabled={saving} /></div>
-            {/* Teléfono y correo NO se editan aquí: el teléfono es la llave que
-                usa el sistema para no duplicar cuentas de venta manual, y el
-                correo real de acceso vive en Supabase Auth, no en esta tabla —
-                ver la nota en updateCustomerName (supabaseAuth.js). */}
-            <div className="ch-input-group">
-              <label className="ch-label">Teléfono</label>
-              <input className="ch-input" value={customer.phone} disabled style={{ opacity: 0.6 }} />
-            </div>
-            <div className="ch-input-group">
-              <label className="ch-label">Email</label>
-              <input className="ch-input" value={customer.email || ""} disabled style={{ opacity: 0.6 }} />
-            </div>
-            <p style={{ fontSize: 12, color: "var(--text-faint)", marginTop: -6, marginBottom: 14 }}>
-              Para cambiar tu teléfono o correo, contáctanos directamente.
-            </p>
-            {error && <p style={{ fontSize: 12.5, color: "var(--rust)", marginTop: -6, marginBottom: 14 }}>{error}</p>}
+            <div className="ch-input-group"><label className="ch-label">Nombre</label><input className="ch-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="ch-input-group"><label className="ch-label">Teléfono</label><input className="ch-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+            <div className="ch-input-group"><label className="ch-label">Email</label><input className="ch-input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="ch-btn ch-btn-ghost" style={{ flex: 1 }} disabled={saving} onClick={() => { setEditing(false); setName(customer.name); setError(null); }}>Cancelar</button>
-              <button className="ch-btn ch-btn-primary" style={{ flex: 1 }} disabled={saving || !name.trim()} onClick={save}>{saving ? "Guardando…" : "Guardar"}</button>
+              <button className="ch-btn ch-btn-ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>Cancelar</button>
+              <button className="ch-btn ch-btn-primary" style={{ flex: 1 }} onClick={save}>Guardar</button>
             </div>
           </>
         ) : (
@@ -4087,7 +4142,7 @@ function LockedState({ onLogin, message, cta }) {
    son demo/locales; para que reflejen a todos los clientes reales hace falta
    mover customers/orders a un backend (ver nota de arquitectura al final).
 ============================================================================ */
-function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty }) {
+function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRefresh, refreshing }) {
   const customerById = (id) => customers.find((c) => c.id === id);
   const statusColor = (s) => s === "Completado" ? "var(--green)" : s === "Cancelado" ? "var(--text-faint)" : "var(--gold)";
   const history = [...stats.allOrders].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -4104,12 +4159,24 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
 
   return (
     <div>
-      <div className="ch-section-title" style={{ marginTop: 18 }}>
-        Pedidos por confirmar {stats.pendingOrders.length > 0 && `(${stats.pendingOrders.length})`}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginTop: 18 }}>
+        <div className="ch-section-title" style={{ marginTop: 0 }}>
+          Pedidos por confirmar {stats.pendingOrders.length > 0 && `(${stats.pendingOrders.length})`}
+        </div>
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            disabled={refreshing}
+            style={{ flexShrink: 0, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 10px", fontSize: 12, color: "var(--text-dim)", cursor: refreshing ? "default" : "pointer", fontFamily: "'Inter', sans-serif" }}
+          >
+            {refreshing ? "Actualizando…" : "Actualizar"}
+          </button>
+        )}
       </div>
       <p style={{ color: "var(--text-faint)", fontSize: 12, marginTop: -6, marginBottom: 10 }}>
         Ajusta cantidades si algo cambió en WhatsApp, y confirma solo cuando el pago ya se haya recibido —
-        ahí se descuenta el stock real y se otorgan los puntos.
+        ahí se descuenta el stock real y se otorgan los puntos. Trae los pedidos reales de cualquier
+        dispositivo; si acabas de recibir uno, dale "Actualizar".
       </p>
       {stats.pendingOrders.length === 0 ? (
         <div className="ch-card"><EmptyRow text="No hay pedidos pendientes por confirmar." /></div>
@@ -5247,7 +5314,7 @@ function AdminGateView({ onSuccess, onCancel }) {
   );
 }
 
-function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit }) {
+function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, ordersLoading }) {
   const [tab, setTab] = useState("pedidos");
   const stats = useMemo(() => computeAdminStats(customers, orders), [customers, orders]);
 
@@ -5316,6 +5383,8 @@ function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrd
           onConfirmOrder={onConfirmOrder}
           onCancelOrder={onCancelOrder}
           onUpdateOrderItemQty={onUpdateOrderItemQty}
+          onRefresh={onRefreshOrders}
+          refreshing={ordersLoading}
         />
       ) : tab === "venta" ? (
         <AdminManualSaleTab

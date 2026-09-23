@@ -133,6 +133,30 @@ export async function signOutCustomer() {
 }
 
 /**
+ * Actualiza SOLO el nombre del cliente (lo único editable desde "Mi perfil").
+ * Teléfono y correo NO se editan desde aquí a propósito: el teléfono es la
+ * llave que usa el sistema para no duplicar cuentas "Sin registrar" creadas
+ * por una venta manual (ver ensureClienteRow en supabaseOrders.js), y el
+ * correo real de acceso vive en Supabase Auth, no en esta tabla — cambiarlo
+ * aquí lo desincronizaría de con qué correo el cliente inicia sesión de
+ * verdad. Si un cliente necesita cambiar cualquiera de esos dos, debe ser el
+ * admin quien lo haga (o el cliente contacta a la tienda).
+ */
+export async function updateCustomerName(dbId, name) {
+  const clean = (name || "").trim();
+  if (!clean) return { error: "El nombre no puede quedar vacío." };
+  const { data, error } = await supabase
+    .from("clientes")
+    .update({ name: clean })
+    .eq("id", dbId)
+    .select("id, name")
+    .single();
+  if (error) return { error: "No se pudo guardar en Supabase: " + error.message };
+  if (!data) return { error: "No se encontró tu cuenta en Supabase. No se guardó nada." };
+  return { ok: true, name: data.name };
+}
+
+/**
  * Inicia sesión real de administrador. A diferencia de verifyAdminCode (que
  * solo comparaba un código contra un hash), esto crea una sesión de verdad
  * en Supabase Auth — la misma que después usan las políticas de RLS en

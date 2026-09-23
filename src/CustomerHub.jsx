@@ -1519,6 +1519,10 @@ export default function CustomerHub() {
     if (currentUser?.dbId) { refreshMyOrders(currentUser.id); refreshMyAccount(currentUser.id); }
   }, [currentUser?.id, currentUser?.dbId]);
 
+  useEffect(() => {
+    if (view === "checkout" && !currentUser) requireAuth("checkout");
+  }, [view, currentUser]);
+
   function handleLogin(customerId) {
     setCurrentUserId(customerId);
     showToast(`Bienvenido, ${customers.find((c) => c.id === customerId)?.name}`);
@@ -1568,7 +1572,9 @@ export default function CustomerHub() {
     }
     setCurrentUserId(result.customer.id);
     setHistory([]);
-    setView("onboarding");
+    const backTo = authIntent;
+    setAuthIntent(null);
+    setView(backTo || "onboarding");
   }
 
 
@@ -1601,6 +1607,7 @@ export default function CustomerHub() {
 
   function confirmCartOrder(checkout) {
     if (cartList.length === 0) return;
+    if (!currentUser) { requireAuth("checkout"); return; }
     const pricing = computeCartPricing(cartList);
     const today = new Date().toISOString().slice(0, 10);
     const delivery = {
@@ -2318,6 +2325,12 @@ export default function CustomerHub() {
             onGoToModel={(id) => { setCatalogTab(id); navigate("catalog"); }}
           />
         )}
+        {(view === "login" || view === "register") && authIntent === "checkout" && (
+          <div className="ch-card" style={{ marginTop: 14, fontSize: 13, lineHeight: 1.5, color: "var(--text-dim)" }}>
+            🛒 Tu pedido te está esperando. Inicia sesión o crea tu cuenta para terminarlo: así ganas puntos
+            con cada compra y puedes darle seguimiento a tu pedido.
+          </div>
+        )}
         {view === "login" && (
           <LoginView
             onAuthLogin={handleAuthLogin}
@@ -2377,7 +2390,7 @@ export default function CustomerHub() {
             pricing={cartPricing}
             onChangeQty={changeCartQty}
             onBack={() => navigate("catalog")}
-            onGoToCheckout={() => navigate("checkout")}
+            onGoToCheckout={() => requireAuth("checkout")}
           />
         )}
         {view === "checkout" && (
@@ -4451,18 +4464,14 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
         20 segundos y suena una campanita cuando llega un pedido nuevo (toca cualquier parte de la
         página una vez para que el navegador permita el sonido).
       </p>
-      {syncInfo && (
+      {syncInfo && (syncInfo.error || (syncInfo.diag && (!syncInfo.diag.hasSession || !syncInfo.diag.isAdmin || syncInfo.diag.clientesError))) && (
         <div style={{ fontSize: 11.5, lineHeight: 1.5, padding: "8px 10px", borderRadius: 10, marginBottom: 10, background: syncInfo.error || (syncInfo.diag && !syncInfo.diag.isAdmin) ? "rgba(196,120,95,0.08)" : "var(--surface-2)", border: "1px solid " + (syncInfo.error || (syncInfo.diag && !syncInfo.diag.isAdmin) ? "var(--rust)" : "var(--border)"), color: "var(--text-dim)", wordBreak: "break-word" }}>
           {syncInfo.error && <>⚠️ {syncInfo.error}</>}
           {syncInfo.diag && (
             <>
               {!syncInfo.diag.hasSession && <div>⚠️ Esta pestaña no tiene sesión de Supabase. Cierra sesión de admin y vuelve a entrar con correo y contraseña.</div>}
               {syncInfo.diag.hasSession && !syncInfo.diag.isAdmin && <div>⚠️ La sesión activa no es de administrador (¿quedó una cuenta de cliente abierta en este navegador?). Cierra sesión y entra como admin.</div>}
-              <div>Supabase devolvió {syncInfo.diag.pedidosLeidos} pedido(s), {syncInfo.diag.pendientes} pendiente(s).</div>
               {syncInfo.diag.clientesError && <div>⚠️ No se pudieron leer los clientes: {syncInfo.diag.clientesError}</div>}
-              {syncInfo.diag.pedidosLeidos === 0 && syncInfo.diag.hasSession && (
-                <div>Si en Supabase sí hay pedidos, falta el permiso de lectura para admin (corre fix-admin-lee-pedidos.sql).</div>
-              )}
             </>
           )}
         </div>

@@ -28,7 +28,7 @@ import { ensureClienteRow, recordSale } from "./supabaseOrders.js";
 const POINTS_PER_PURCHASE_RATE = 0.2; // DEMO: 1 MXN gastado ≈ 0.2 puntos. Configurable.
 
 // Número real de WhatsApp del negocio — el botón "Hacer pedido" abre el chat aquí.
-const WHATSAPP_NUMBER = "523314862857";
+const WHATSAPP_NUMBER = "523320465574";
 function waLink(text) {
   return `https://wa.me/${WHATSAPP_NUMBER}${text ? "?text=" + encodeURIComponent(text) : ""}`;
 }

@@ -82,14 +82,11 @@ export async function registerCustomer({ name, phone, email, password, referrerC
   if (match && match.status === "provisional") {
     // Reclamar la cuenta provisional: se actualiza en vez de crear una nueva,
     // así conserva los puntos y compras que ya tenía.
-    const { data: updated, error: updateError } = await supabase
-      .from("clientes")
-      .update({ user_id: userId, name, email, status: "active", origin: match.origin || "app" })
-      .eq("id", match.id)
-      .select()
-      .single();
-    if (updateError) return { error: "Tu cuenta de acceso se creó, pero no se pudo vincular con tus compras anteriores. Contáctanos." };
-    return { customer: dbRowToCustomer(updated, email), needsEmailConfirmation };
+    const { data: claimed, error: claimError } = await supabase.rpc("claim_provisional_customer", {
+      p_phone: phone, p_name: name, p_email: email,
+    });
+    if (claimError) return { error: "Tu cuenta de acceso se creó, pero no se pudo vincular con tus compras anteriores. Contáctanos. (" + claimError.message + ")" };
+    return { customer: dbRowToCustomer(claimed, email), needsEmailConfirmation };
   }
 
   // 3) Cliente totalmente nuevo.

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import {
-  Home, ShoppingBag, Gift, Wallet, User, MessageCircle, Users, ChevronRight,
+  Home, ShoppingBag, Gift, Wallet, User, MessageCircle, Users, ChevronRight, ChevronLeft,
   Copy, Check, X, ArrowLeft, Menu, LogOut, TrendingUp, TrendingDown, Star,
   Clock, Package, Sparkles, ChevronDown, ChevronUp, Plus, Minus, Lock, Eye, EyeOff,
   Banknote, Landmark, CreditCard, MapPin, Tag,
@@ -2672,6 +2672,21 @@ function GlobalStyle() {
 
       .ch-model-tabs { display: flex; gap: 8px; overflow-x: auto; margin-top: 16px; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
       .ch-model-tabs::-webkit-scrollbar { display: none; }
+      .ch-model-tabs-wrap { position: relative; }
+      .ch-model-tabs-arrow {
+        display: none; position: absolute; top: 50%; transform: translateY(-50%);
+        width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--border);
+        background: var(--surface); color: var(--text-dim); align-items: center; justify-content: center;
+        cursor: pointer; z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      }
+      .ch-model-tabs-arrow:hover { background: var(--gold); color: #14150F; border-color: var(--gold-dim); }
+      .ch-model-tabs-arrow-left { left: -4px; }
+      .ch-model-tabs-arrow-right { right: -4px; }
+      /* Solo en pantallas con mouse (desktop): en touch (celular/tablet) ya se
+         desliza con el dedo, así que las flechas solo estorbarían. */
+      @media (hover: hover) and (pointer: fine) {
+        .ch-model-tabs-wrap:hover .ch-model-tabs-arrow { display: flex; }
+      }
       .ch-model-tab {
         flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
         padding: 9px 14px; border-radius: 999px; border: 1px solid var(--border);
@@ -3693,28 +3708,50 @@ function PromotionsView({ onGoToModel }) {
 function CatalogView({ activeModelId, onChangeModel, cart, onChangeQty, stockLevels }) {
   const model = MODELS.find((m) => m.id === activeModelId) || MODELS[0];
   const products = PRODUCTS_BY_MODEL[model.id];
+  const modelTabsRef = useRef(null);
+  const scrollModelTabs = (dir) => {
+    modelTabsRef.current?.scrollBy({ left: dir * 220, behavior: "smooth" });
+  };
 
   return (
     <div style={{ paddingTop: 20 }}>
       <h1 className="ch-serif" style={{ fontSize: 24 }}>Catálogo</h1>
       <p style={{ color: "var(--text-dim)", fontSize: 13.5, marginTop: 4 }}>The King Shop — elige tu modelo, sabor y cantidad.</p>
 
-      <div className="ch-model-tabs">
-        {MODELS.map((m) => {
-          const qtyInModel = PRODUCTS_BY_MODEL[m.id].reduce((s, p) => s + (cart[p.id] || 0), 0);
-          return (
-            <button
-              key={m.id}
-              className={"ch-model-tab" + (m.id === activeModelId ? " ch-model-tab-active" : "")}
-              onClick={() => onChangeModel(m.id)}
-              style={m.available === false ? { opacity: 0.55 } : undefined}
-            >
-              <span>{m.icon}</span>
-              <span>{m.name}{m.available === false ? " (Agotado)" : ""}</span>
-              {qtyInModel > 0 && <span className="ch-model-tab-badge">{qtyInModel}</span>}
-            </button>
-          );
-        })}
+      <div className="ch-model-tabs-wrap">
+        <button
+          type="button"
+          aria-label="Modelos anteriores"
+          className="ch-model-tabs-arrow ch-model-tabs-arrow-left"
+          onClick={() => scrollModelTabs(-1)}
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <div className="ch-model-tabs" ref={modelTabsRef}>
+          {MODELS.map((m) => {
+            const qtyInModel = PRODUCTS_BY_MODEL[m.id].reduce((s, p) => s + (cart[p.id] || 0), 0);
+            return (
+              <button
+                key={m.id}
+                className={"ch-model-tab" + (m.id === activeModelId ? " ch-model-tab-active" : "")}
+                onClick={() => onChangeModel(m.id)}
+                style={m.available === false ? { opacity: 0.55 } : undefined}
+              >
+                <span>{m.icon}</span>
+                <span>{m.name}{m.available === false ? " (Agotado)" : ""}</span>
+                {qtyInModel > 0 && <span className="ch-model-tab-badge">{qtyInModel}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          aria-label="Más modelos"
+          className="ch-model-tabs-arrow ch-model-tabs-arrow-right"
+          onClick={() => scrollModelTabs(1)}
+        >
+          <ChevronRight size={16} />
+        </button>
       </div>
 
       <div className="ch-model-reference">

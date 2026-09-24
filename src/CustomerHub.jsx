@@ -13,7 +13,7 @@ import {
 import { supabase } from "./supabaseClient.js";
 import {
   loadMyRedemptions, loadMyTransactions, redeemReward, releaseOrderCredit,
-  awardReferralIfFirstPurchase as awardReferralInDb, loadPendingRedemptions, markRedemptionFulfilled,
+  awardReferralIfFirstPurchase as awardReferralInDb, loadPendingRedemptions, markRedemptionFulfilled, loadMyReferrals,
 } from "./supabaseRewards.js";
 import { ensureClienteRow, recordSale, createPendingOrder, updateOrderStatus, loadOrdersWithCustomers, loadMyOrders, updatePendingOrderItems } from "./supabaseOrders.js";
 
@@ -642,8 +642,8 @@ const INITIAL_REFERRALS = {};
    Se calcula leyendo quién trae `referredBy` apuntando a esta persona y si esos
    invitados ya tienen una compra confirmada. Cero contadores que mantener.
 ---------------------------------------------------------------------------- */
-function computeReferralStats(customers, orders, referrerId, invitedCount) {
-  const friends = customers
+function computeReferralStats(customers, orders, referrerId, invitedCount, dbFriends) {
+  const localFriends = customers
     .filter((c) => c.referredBy === referrerId)
     .map((c) => {
       const confirmed = (orders[c.id] || [])
@@ -659,6 +659,9 @@ function computeReferralStats(customers, orders, referrerId, invitedCount) {
       };
     })
     .sort((a, b) => (a.joinedAt < b.joinedAt ? 1 : -1));
+  // Lo que dice Supabase (la sesión del cliente no puede leer a los demás clientes,
+  // por eso la lista local casi siempre está vacía) manda cuando está disponible.
+  const friends = Array.isArray(dbFriends) ? dbFriends : localFriends;
 
   const purchased = friends.filter((f) => f.purchased).length;
   return {
@@ -1165,6 +1168,7 @@ export default function CustomerHub() {
   const [orders, setOrders] = useState(INITIAL_ORDERS);
   const [redemptions, setRedemptions] = useState(INITIAL_REDEMPTIONS);
   const [referrals, setReferrals] = useState(INITIAL_REFERRALS);
+  const [referralFriends, setReferralFriends] = useState({}); // invitados reales, por cliente (desde Supabase)
   const [stockLevels, setStockLevels] = useState(INITIAL_STOCK);
   // MODELS/PRODUCTS son arreglos de módulo (no estado de React), así que
   // mutarlos (agregar/renombrar/borrar un modelo o un sabor) no dispara un
@@ -1507,7 +1511,9 @@ export default function CustomerHub() {
   // Movimientos de puntos y canjes/crédito reales del cliente, más su perfil
   // (puntos actuales). Todo viene de Supabase: lo local solo es un reflejo.
   async function refreshMyAccount(customerId) {
-    const [rd, tx, profile] = await Promise.all([loadMyRedemptions(), loadMyTransactions(), getActiveSessionCustomer()]);
+    const [rd, tx, profile, rf] = await Promise.all([loadMyRedemptions(), loadMyTransactions(), getActiveSessionCustomer(), loadMyReferrals()]);
+    if (rf.error) console.warn("refreshMyAccount:", rf.error);
+    else setReferralFriends((f) => ({ ...f, [customerId]: rf.friends }));
     if (rd.error) console.warn("refreshMyAccount:", rd.error);
     else setRedemptions((r) => ({ ...r, [customerId]: rd.redemptions }));
     if (tx.error) console.warn("refreshMyAccount:", tx.error);
@@ -2011,7 +2017,7 @@ export default function CustomerHub() {
         if (!data || data.length === 0) {
           return {
             ok: false,
-            error: `No existe en Supabase el sabor con id=${product.dbId} (${product.name}). No se guardó nada — revisa esa tabla.`,
+            error: `No se guardó el stock de "${product.name}". Puede que tu sesión de administrador haya caducado (sal del panel y vuelve a entrar) o que ese sabor ya no exista en Supabase.`,
           };
         }
       } catch (err) {
@@ -2264,8 +2270,8 @@ export default function CustomerHub() {
   const myWallet = useMemo(() => creditWallet(myRedemptions), [myRedemptions]);
   const merchandisingPicks = useMemo(() => computeMerchandisingPicks(stockLevels), [stockLevels]);
   const myReferralStats = useMemo(
-    () => currentUser ? computeReferralStats(customers, orders, currentUser.id, referrals[currentUser.id]?.invited) : null,
-    [currentUser, customers, orders, referrals]
+    () => currentUser ? computeReferralStats(customers, orders, currentUser.id, referrals[currentUser.id]?.invited, referralFriends[currentUser.id]) : null,
+    [currentUser, customers, orders, referrals, referralFriends]
   );
 
   const filteredTx = useMemo(() => {

@@ -118,3 +118,22 @@ export async function markRedemptionFulfilled(canjeDbId) {
     return { ok: true };
   } catch (e) { return { error: "Error inesperado: " + (e?.message || String(e)) }; }
 }
+
+/** Cliente: sus invitados (primer nombre, si ya compraron y si ya se pagó el bono). */
+export async function loadMyReferrals() {
+  try {
+    const { data, error } = await supabase.rpc("get_my_referrals");
+    if (error) return { error: "No se pudieron cargar tus invitados: " + errText(error) };
+    return {
+      ok: true,
+      friends: (data || []).map((f) => ({
+        id: `db_${f.friend_id}`,
+        name: f.first_name || "Amigo",
+        joinedAt: f.joined_at || "",
+        purchased: !!f.purchased,
+        firstPurchaseAt: null,
+        rewarded: !!f.rewarded,
+      })),
+    };
+  } catch (e) { return { error: "Error inesperado al cargar invitados: " + (e?.message || String(e)) }; }
+}

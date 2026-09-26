@@ -1187,7 +1187,7 @@ function ArtIcon({ kind, className }) {
     case "credit": return <div className={className} style={{ fontSize: 28 }}>💳</div>;
     case "thermos": return <div className={className} style={{ fontSize: 28 }}>🧴</div>;
     case "kit": return <div className={className} style={{ fontSize: 28 }}>🎁</div>;
-    case "vape": return <div className={className} style={{ fontSize: 28 }}>💨</div>;
+    case "vape": return null;
     case "bag": return <div className={className} style={{ fontSize: 28 }}>☕</div>;
     case "box": return <div className={className} style={{ fontSize: 28 }}>📦</div>;
     case "mug": return <div className={className} style={{ fontSize: 28 }}>🍵</div>;
@@ -1529,6 +1529,13 @@ export default function CustomerHub() {
       if (!active || !customer) return;
       upsertLocalCustomer(customer);
       setCurrentUserId(customer.id);
+      // Antes solo se guardaba el id y la vista se quedaba en "landing" (la
+      // pantalla de invitado con Iniciar sesión / Crear cuenta), aunque la
+      // sesión sí estuviera restaurada — por eso el saludo del header salía
+      // bien pero el contenido se veía como si no hubiera sesión. Si al
+      // restaurar la sesión seguimos en esa pantalla de bienvenida, mandamos
+      // directo al panel del cliente.
+      setView((v) => (v === "landing" ? "dashboard" : v));
     });
     return () => { active = false; };
   }, []);
@@ -2624,7 +2631,7 @@ function GlobalStyle() {
         width: 30px; height: 30px; border-radius: 8px; background: var(--gold);
         display: flex; align-items: center; justify-content: center; color: #14150F; font-weight: 700; font-size: 14px;
       }
-      .ch-logo-name { font-family: 'Fraunces', serif; font-size: 17px; letter-spacing: 0.2px; }
+      .ch-logo-name { font-family: 'Fraunces', serif; font-size: 17px; letter-spacing: 0.2px; color: var(--text); }
       .ch-greet { font-size: 12.5px; color: var(--text-dim); }
 
       .ch-bottom-nav {
@@ -3097,7 +3104,6 @@ function MerchandisingRow({ picks, onSelect }) {
               fontFamily: "'Inter', sans-serif", color: "var(--text)",
             }}
           >
-            <div style={{ fontSize: 24 }}>{model?.icon || "💨"}</div>
             <div style={{ fontWeight: 600, fontSize: 12.5, marginTop: 8, lineHeight: 1.3 }}>{model?.name}</div>
             <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 2 }}>{product.name}</div>
             <div style={{ fontSize: 12.5, color: "var(--gold)", marginTop: 6, fontWeight: 600 }}>{formatMoney(product.price)}</div>
@@ -3738,7 +3744,6 @@ function PromoByModelList({ onGoToModel }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {MODELS.filter((m) => m.available !== false).map((m) => (
         <button key={m.id} className="ch-promo-model-card" onClick={() => onGoToModel(m.id)}>
-          <span style={{ fontSize: 24, flexShrink: 0 }}>{m.icon}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{m.name}</div>
             <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{m.subtitle}</div>
@@ -3815,7 +3820,6 @@ function CatalogView({ activeModelId, onChangeModel, cart, onChangeQty, stockLev
                 onClick={() => onChangeModel(m.id)}
                 style={m.available === false ? { opacity: 0.55 } : undefined}
               >
-                <span>{m.icon}</span>
                 <span>{m.name}{m.available === false ? " (Agotado)" : ""}</span>
                 {qtyInModel > 0 && <span className="ch-model-tab-badge">{qtyInModel}</span>}
               </button>
@@ -3837,7 +3841,6 @@ function CatalogView({ activeModelId, onChangeModel, cart, onChangeQty, stockLev
           <img src={model.referenceImage} alt={model.name} />
         ) : (
           <div className="ch-model-reference-placeholder">
-            <span style={{ fontSize: 40 }}>{model.icon}</span>
             <span>Imagen de referencia próximamente</span>
           </div>
         )}
@@ -3927,7 +3930,7 @@ function ProductDetailView({ product, onBack, qty, onChangeQty, onAdd, stockLeve
       </div>
       {model && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14, fontSize: 12, color: "var(--text-faint)" }}>
-          <span>{model.icon}</span><span>{model.name} · {model.subtitle}</span>
+          <span>{model.name} · {model.subtitle}</span>
         </div>
       )}
       <h1 className="ch-serif" style={{ fontSize: 24, marginTop: 6 }}>{product.name}</h1>
@@ -3982,7 +3985,6 @@ function CartView({ cartList, pricing, onChangeQty, onBack, onGoToCheckout }) {
       {pricing.modelBreakdown.map((mb) => (
         <div key={mb.modelId} style={{ marginTop: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
-            <span>{mb.model.icon}</span>
             <span className="ch-serif" style={{ fontSize: 15 }}>{mb.model.name}</span>
             <span style={{ fontSize: 11, color: "var(--text-faint)" }}>· {mb.model.subtitle}</span>
           </div>
@@ -5110,7 +5112,7 @@ function AdminStatsTab({ stats, stockLevels, customers, orders }) {
           ) : low.map(({ p, remaining }) => (
             <Row
               key={p.id}
-              label={`${model(p.modelId)?.icon || ""} ${model(p.modelId)?.name} — ${p.name}`}
+              label={`${model(p.modelId)?.name} — ${p.name}`}
               value={remaining === 0 ? "Agotado" : `${remaining} pzs`}
               bold={remaining === 0}
             />
@@ -5186,7 +5188,7 @@ function AdminStatsTab({ stats, stockLevels, customers, orders }) {
           <AdminBreakdownRow
             key={r.model.id}
             rowKey={`model:${r.model.id}`}
-            label={`${r.model.icon} ${r.model.name}`}
+            label={`${r.model.name}`}
             qty={r.qty}
             maxQty={stats.maxModelQty}
             color="var(--gold)"
@@ -5343,7 +5345,6 @@ function AdminManualSaleTab({ customers, stockLevels, onRegisterManualSale }) {
               onClick={() => setCatalogTab(m.id)}
               style={m.available === false ? { opacity: 0.55 } : undefined}
             >
-              <span>{m.icon}</span>
               <span>{m.name}</span>
               {qtyInModel > 0 && <span className="ch-model-tab-badge">{qtyInModel}</span>}
             </button>
@@ -5479,7 +5480,6 @@ function AdminStockTab({ stockLevels, onSetStock }) {
               onClick={() => setCatalogTab(m.id)}
               style={m.available === false ? { opacity: 0.55 } : undefined}
             >
-              <span>{m.icon}</span>
               <span>{m.name}</span>
             </button>
           ))}
@@ -5661,7 +5661,6 @@ function AdminModelCard({ model, isOpen, onToggle, onUpdateModel, onDeleteModel,
         style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 14px", cursor: "pointer" }}
         onClick={() => !editingHeader && onToggle()}
       >
-        <span style={{ fontSize: 18 }}>{model.icon}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14.5, fontWeight: 600 }}>{model.name}</div>
           <div style={{ fontSize: 11.5, color: "var(--text-faint)" }}>

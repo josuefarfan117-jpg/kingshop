@@ -166,7 +166,7 @@ function creditAppliedFor(subtotal, available) {
    cuando en Google Cloud → Credenciales esté restringida a tu dominio y solo
    a "Places API" y "Maps JavaScript API" (ver el resto de la conversación).
 ---------------------------------------------------------------------------- */
-const GOOGLE_MAPS_API_KEY = "AIzaSyAOzc9wRV2jK58fCMFO6wwIljPO8ZogdbM";
+const GOOGLE_MAPS_API_KEY = "AIzaSyAOzc9wRV2jK58fCMFO6wwlIjPO8ZogdbM";
 
 let _mapsLoadPromise = null;
 function loadGoogleMapsPlaces() {
@@ -2880,6 +2880,41 @@ function GlobalStyle() {
         .ch-main { max-width: 980px; }
         .ch-product-grid { grid-template-columns: repeat(4, 1fr); }
       }
+
+      /* Menú de sugerencias de direcciones de Google (Autocomplete). Google lo
+         inyecta directo en <body>, fuera del árbol de React, así que hereda
+         resets sueltos de esta página y se ve roto (fondo transparente, texto
+         encimado, un icono que se pinta como "tofu"/símbolo raro). Le damos
+         estilos explícitos con !important para que se vea bien sin importar
+         el resto del CSS, y quitamos el icono problemático de cada sugerencia. */
+      .pac-container {
+        z-index: 20000 !important;
+        background: var(--surface) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-s) !important;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35) !important;
+        font-family: 'Inter', sans-serif !important;
+        margin-top: 4px !important;
+        overflow: hidden !important;
+      }
+      .pac-item {
+        padding: 10px 12px !important;
+        font-size: 13px !important;
+        line-height: 1.4 !important;
+        color: var(--text) !important;
+        border-top: 1px solid var(--border) !important;
+        cursor: pointer !important;
+      }
+      .pac-item:first-child { border-top: none !important; }
+      .pac-item:hover, .pac-item-selected {
+        background: var(--surface-2) !important;
+      }
+      .pac-item-query {
+        color: var(--text) !important;
+        font-size: 13px !important;
+      }
+      .pac-matched { color: var(--gold) !important; font-weight: 600 !important; }
+      .pac-icon { display: none !important; }
     `}</style>
   );
 }
@@ -5954,4 +5989,3 @@ function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrd
    migrar a backend significa reemplazar esas funciones por llamadas
    fetch/SDK sin tocar los componentes de UI.
 ============================================================================ */
-

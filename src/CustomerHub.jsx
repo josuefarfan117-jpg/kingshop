@@ -5954,3 +5954,4 @@ function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrd
    migrar a backend significa reemplazar esas funciones por llamadas
    fetch/SDK sin tocar los componentes de UI.
 ============================================================================ */
+

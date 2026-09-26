@@ -158,6 +158,39 @@ function creditAppliedFor(subtotal, available) {
   return Math.max(0, Math.min(available, maxCreditForOrder(subtotal)));
 }
 
+/* ----------------------------------------------------------------------------
+   GOOGLE MAPS — confirmación de dirección de entrega
+   La clave es del tipo "cliente/navegador": Google la protege por dominio
+   (Referentes HTTP), NO por estar oculta en el código — así funciona siempre
+   este tipo de clave. Por eso está bien que esté aquí a la vista, siempre y
+   cuando en Google Cloud → Credenciales esté restringida a tu dominio y solo
+   a "Places API" y "Maps JavaScript API" (ver el resto de la conversación).
+---------------------------------------------------------------------------- */
+const GOOGLE_MAPS_API_KEY = "AIzaSyAOzc9wRV2jK58fCMFO6wwIljPO8ZogdbM";
+
+let _mapsLoadPromise = null;
+function loadGoogleMapsPlaces() {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.google?.maps?.places) return Promise.resolve(true);
+  if (_mapsLoadPromise) return _mapsLoadPromise;
+  _mapsLoadPromise = new Promise((resolve) => {
+    const existing = document.getElementById("ch-google-maps-script");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(!!window.google?.maps?.places));
+      existing.addEventListener("error", () => resolve(false));
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = "ch-google-maps-script";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places&language=es&region=MX`;
+    script.async = true;
+    script.onload = () => resolve(!!window.google?.maps?.places);
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
+  return _mapsLoadPromise;
+}
+
 // Dominio real de la página. De aquí cuelga el enlace personal de cada
 // cliente. Se toma del navegador (window.location.origin) para que el
 // enlace siempre apunte a donde de verdad está corriendo la página — sirve
@@ -597,7 +630,9 @@ const PROMOTIONS = [
   // aplica al calcular puntos), así que se apaga aquí en vez de borrarla —
   // cuando esa lógica exista, basta con volver a poner active: true.
   { id: "pr1", title: "Puntos dobles esta semana", description: "Todas tus compras suman el doble de puntos hasta el domingo.", startDate: "2026-09-14", endDate: "2026-09-20", type: "bonus", value: "2x", active: false },
-  { id: "pr2", title: "Envío sin costo +$600", description: "Pedidos mayores a $600 no pagan envío.", startDate: "2026-09-01", endDate: "2026-09-30", type: "shipping", value: "$0", active: true },
+  // Desactivada a petición: ya no se ofrece envío gratis. Se deja el registro
+  // (en vez de borrarlo) por si se quiere reactivar más adelante.
+  { id: "pr2", title: "Envío sin costo +$600", description: "Pedidos mayores a $600 no pagan envío.", startDate: "2026-09-01", endDate: "2026-09-30", type: "shipping", value: "$0", active: false },
 ];
 
 export function makeCustomer(over) {
@@ -777,6 +812,9 @@ function buildCartMessage(cartList, pricing, checkout) {
     const methodLabel = PAYMENT_METHODS.find((m) => m.id === checkout.paymentMethod)?.label || checkout.paymentMethod;
     message += `\n\nMétodo de pago: ${methodLabel}`;
     message += `\n\nDirección de entrega:\n${checkout.address}`;
+    if (checkout.addressConfirmed && checkout.addressMapsUrl) {
+      message += `\nUbicación confirmada en Google Maps: ${checkout.addressMapsUrl}`;
+    }
     if (checkout.reference && checkout.reference.trim()) {
       message += `\n\nReferencia del lugar: ${checkout.reference.trim()}`;
     }
@@ -1211,7 +1249,7 @@ export default function CustomerHub() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState(null); // where to go after login
   const [cart, setCart] = useState({}); // { productId: qty }
-  const [checkoutInfo, setCheckoutInfo] = useState({ paymentMethod: "", address: "", reference: "", useCredit: true });
+  const [checkoutInfo, setCheckoutInfo] = useState({ paymentMethod: "", address: "", addressPlaceId: "", addressLat: null, addressLng: null, addressMapsUrl: "", addressConfirmed: false, reference: "", useCredit: true });
   const [lastOrder, setLastOrder] = useState(null);
   const [catalogTab, setCatalogTab] = useState(MODELS[0].id);
   const [ageVerified, setAgeVerified] = useState(() => {
@@ -1659,7 +1697,7 @@ export default function CustomerHub() {
       setLastOrder({ items: cartList.map((i) => ({ name: i.product.name, qty: i.qty })), pricing, subtotal: pricing.total, creditUsed: 0, total: pricing.total, pointsEarned: null, date: today, guest: true, ...delivery });
     }
     setCart({});
-    setCheckoutInfo({ paymentMethod: "", address: "", reference: "", useCredit: true });
+    setCheckoutInfo({ paymentMethod: "", address: "", addressPlaceId: "", addressLat: null, addressLng: null, addressMapsUrl: "", addressConfirmed: false, reference: "", useCredit: true });
   }
 
   // Actualiza campos de sincronización (dbOrderId / syncError) de un pedido
@@ -3951,6 +3989,75 @@ function CartView({ cartList, pricing, onChangeQty, onBack, onGoToCheckout }) {
   );
 }
 
+// Campo de dirección con autocompletado y confirmación de Google Maps.
+// El cliente escribe, Google le muestra un menú con direcciones reales que
+// coinciden, y solo al ELEGIR una de esa lista queda "confirmada" — evita
+// que un error de dedo o una calle mal escrita mande al repartidor a otro
+// lado. Si el cliente vuelve a editar el texto a mano después de confirmar,
+// se le quita la confirmación y tiene que volver a elegir de la lista.
+function AddressAutocompleteInput({ value, confirmed, onChangeText, onSelectPlace }) {
+  const inputRef = useRef(null);
+  const autocompleteRef = useRef(null);
+  const [mapsReady, setMapsReady] = useState(null); // null = cargando, true/false ya se supo
+
+  useEffect(() => {
+    let cancelled = false;
+    loadGoogleMapsPlaces().then((ok) => {
+      if (cancelled) return;
+      setMapsReady(ok);
+      if (ok && inputRef.current && window.google?.maps?.places) {
+        autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
+          fields: ["formatted_address", "geometry", "place_id"],
+          componentRestrictions: { country: "mx" },
+        });
+        autocompleteRef.current.addListener("place_changed", () => {
+          const place = autocompleteRef.current.getPlace();
+          if (!place || !place.geometry || !place.geometry.location) return;
+          const lat = place.geometry.location.lat();
+          const lng = place.geometry.location.lng();
+          const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}&query_place_id=${place.place_id}`;
+          onSelectPlace({
+            address: place.formatted_address || inputRef.current.value,
+            placeId: place.place_id,
+            lat, lng, mapsUrl,
+          });
+        });
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        className="ch-input"
+        value={value}
+        onChange={(e) => onChangeText(e.target.value)}
+        placeholder="Empieza a escribir tu calle y número…"
+        autoComplete="off"
+      />
+      {mapsReady === true && (
+        confirmed ? (
+          <div style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-dim)", fontSize: 11.5, padding: "5px 10px", borderRadius: 999 }}>
+            <Check size={12} /> Dirección confirmada con Google Maps
+          </div>
+        ) : (
+          <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 6 }}>
+            Elige tu dirección de la lista que aparece al escribir — así queda confirmada con Google Maps.
+          </div>
+        )
+      )}
+      {mapsReady === false && (
+        <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 6 }}>
+          No se pudo cargar el confirmador de direcciones — escribe tu dirección completa y con la mayor precisión posible.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, creditAvailable = 0, onBack, waLink, buildCartMessage, onConfirm, navigateAfterConfirm }) {
   const [touched, setTouched] = useState(false);
   if (cartList.length === 0) {
@@ -3964,7 +4071,13 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
     );
   }
 
-  const isValid = !!checkoutInfo.paymentMethod && checkoutInfo.address.trim().length > 0;
+  // Si el autocompletado de Google Maps cargó bien, exigimos que la
+  // dirección venga confirmada de la lista (evita errores de escritura).
+  // Si por algún motivo no cargó (sin internet en ese momento, bloqueado,
+  // etc.), no se le bloquea el pedido al cliente por una falla ajena a él —
+  // basta con que haya escrito algo.
+  const mapsAvailable = typeof window !== "undefined" && !!window.google?.maps?.places;
+  const isValid = !!checkoutInfo.paymentMethod && checkoutInfo.address.trim().length > 0 && (!mapsAvailable || checkoutInfo.addressConfirmed);
   // El crédito se aplica entero hasta donde alcance, pero nunca por encima del
   // 30% del pedido (ver CREDIT_MAX_PERCENT) — es la regla que evita que una
   // compra salga gratis o que la tienda pierda dinero en ella.
@@ -4026,15 +4139,40 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
           <MapPin size={14} /> Dirección de entrega
         </div>
         <div className="ch-input-group" style={{ marginTop: 6 }}>
-          <input
-            className="ch-input"
+          <AddressAutocompleteInput
             value={checkoutInfo.address}
-            onChange={(e) => setCheckoutInfo((c) => ({ ...c, address: e.target.value }))}
-            placeholder="Calle, número, colonia, ciudad"
+            confirmed={checkoutInfo.addressConfirmed}
+            onChangeText={(text) =>
+              setCheckoutInfo((c) => ({
+                ...c,
+                address: text,
+                // Si edita el texto a mano, ya no cuenta como confirmada por
+                // Maps hasta que vuelva a elegir una opción de la lista.
+                addressConfirmed: false,
+                addressPlaceId: "",
+                addressLat: null,
+                addressLng: null,
+                addressMapsUrl: "",
+              }))
+            }
+            onSelectPlace={({ address, placeId, lat, lng, mapsUrl }) =>
+              setCheckoutInfo((c) => ({
+                ...c,
+                address,
+                addressConfirmed: true,
+                addressPlaceId: placeId,
+                addressLat: lat,
+                addressLng: lng,
+                addressMapsUrl: mapsUrl,
+              }))
+            }
           />
         </div>
         {touched && !checkoutInfo.address.trim() && (
           <div style={{ color: "var(--rust)", fontSize: 12, marginTop: -10, marginBottom: 10 }}>Escribe la dirección de entrega.</div>
+        )}
+        {touched && mapsAvailable && checkoutInfo.address.trim() && !checkoutInfo.addressConfirmed && (
+          <div style={{ color: "var(--rust)", fontSize: 12, marginTop: -10, marginBottom: 10 }}>Elige tu dirección de la lista para confirmarla.</div>
         )}
         <label className="ch-label">Referencia del lugar (opcional)</label>
         <textarea
@@ -5249,6 +5387,10 @@ function AdminStockTab({ stockLevels, onSetStock }) {
   const [catalogTab, setCatalogTab] = useState(MODELS[0]?.id);
   const model = MODELS.find((m) => m.id === catalogTab) || MODELS[0];
   const products = PRODUCTS_BY_MODEL[model?.id] || [];
+  const modelTabsRef = useRef(null);
+  const scrollModelTabs = (dir) => {
+    modelTabsRef.current?.scrollBy({ left: dir * 220, behavior: "smooth" });
+  };
   const totalUnits = useMemo(
     () => PRODUCTS.reduce((s, p) => s + (stockLevels?.[p.id] ?? 0), 0),
     [stockLevels]
@@ -5280,18 +5422,36 @@ function AdminStockTab({ stockLevels, onSetStock }) {
         </div>
       </div>
 
-      <div className="ch-model-tabs" style={{ marginTop: 14 }}>
-        {MODELS.map((m) => (
-          <button
-            key={m.id}
-            className={"ch-model-tab" + (m.id === catalogTab ? " ch-model-tab-active" : "")}
-            onClick={() => setCatalogTab(m.id)}
-            style={m.available === false ? { opacity: 0.55 } : undefined}
-          >
-            <span>{m.icon}</span>
-            <span>{m.name}</span>
-          </button>
-        ))}
+      <div className="ch-model-tabs-wrap" style={{ marginTop: 14 }}>
+        <button
+          type="button"
+          aria-label="Modelos anteriores"
+          className="ch-model-tabs-arrow ch-model-tabs-arrow-left"
+          onClick={() => scrollModelTabs(-1)}
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <div className="ch-model-tabs" ref={modelTabsRef}>
+          {MODELS.map((m) => (
+            <button
+              key={m.id}
+              className={"ch-model-tab" + (m.id === catalogTab ? " ch-model-tab-active" : "")}
+              onClick={() => setCatalogTab(m.id)}
+              style={m.available === false ? { opacity: 0.55 } : undefined}
+            >
+              <span>{m.icon}</span>
+              <span>{m.name}</span>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          aria-label="Más modelos"
+          className="ch-model-tabs-arrow ch-model-tabs-arrow-right"
+          onClick={() => scrollModelTabs(1)}
+        >
+          <ChevronRight size={16} />
+        </button>
       </div>
 
       <div className="ch-flavor-list">

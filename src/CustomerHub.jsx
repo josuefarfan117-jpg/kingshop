@@ -2882,17 +2882,20 @@ function GlobalStyle() {
       }
 
       /* Menú de sugerencias de direcciones de Google (Autocomplete). Google lo
-         inyecta directo en <body>, fuera del árbol de React, así que hereda
-         resets sueltos de esta página y se ve roto (fondo transparente, texto
-         encimado, un icono que se pinta como "tofu"/símbolo raro). Le damos
-         estilos explícitos con !important para que se vea bien sin importar
-         el resto del CSS, y quitamos el icono problemático de cada sugerencia. */
+         inyecta directo en <body>, FUERA de .ch-root — por eso no puede leer
+         las variables --surface/--border/--text/etc. (esas solo existen
+         dentro de .ch-root) y se veía transparente con texto invisible.
+         Aquí usamos los colores del tema en directo (mismos valores que
+         --surface #161B18, --surface-2 #1D2420, --border #2B332D,
+         --text #F3F1EA, --text-faint #67716A, --gold #D4AF6A) para que se
+         vea bien sin depender de esas variables. También quitamos el icono
+         problemático de cada sugerencia. */
       .pac-container {
         z-index: 20000 !important;
-        background: var(--surface) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-s) !important;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.35) !important;
+        background-color: #161B18 !important;
+        border: 1px solid #2B332D !important;
+        border-radius: 10px !important;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.45) !important;
         font-family: 'Inter', sans-serif !important;
         margin-top: 4px !important;
         overflow: hidden !important;
@@ -2901,19 +2904,21 @@ function GlobalStyle() {
         padding: 10px 12px !important;
         font-size: 13px !important;
         line-height: 1.4 !important;
-        color: var(--text) !important;
-        border-top: 1px solid var(--border) !important;
+        color: #F3F1EA !important;
+        background-color: #161B18 !important;
+        border-top: 1px solid #2B332D !important;
         cursor: pointer !important;
       }
       .pac-item:first-child { border-top: none !important; }
       .pac-item:hover, .pac-item-selected {
-        background: var(--surface-2) !important;
+        background-color: #1D2420 !important;
       }
       .pac-item-query {
-        color: var(--text) !important;
+        color: #F3F1EA !important;
         font-size: 13px !important;
       }
-      .pac-matched { color: var(--gold) !important; font-weight: 600 !important; }
+      .pac-matched { color: #D4AF6A !important; font-weight: 600 !important; }
+      .pac-item span:not(.pac-item-query):not(.pac-matched) { color: #67716A !important; }
       .pac-icon { display: none !important; }
     `}</style>
   );

@@ -2595,7 +2595,7 @@ const HALLOWEEN_CSS = `
       .ch-logo-name::after {
         content: ""; display: inline-block; width: 18px; height: 9px; margin-left: 8px;
         vertical-align: 1px; opacity: 0.85;
-        background: ${BAT} center / contain no-repeat;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Cpolygon fill='%23A593E0' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/svg%3E") center / contain no-repeat;
       }
 
       /* Saldo: luna creciente con dos estrellitas en la esquina */
@@ -2622,7 +2622,7 @@ const HALLOWEEN_CSS = `
       }
       .ch-promo-card::after {
         content: ""; position: absolute; top: 0; right: 0; width: 84px; height: 84px;
-        background: ${WEB} top right / contain no-repeat; opacity: 0.22; pointer-events: none;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23B9B2D9' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.22; pointer-events: none;
       }
       .ch-eyebrow { color: var(--pumpkin); }
 
@@ -2644,7 +2644,7 @@ const HALLOWEEN_CSS = `
       .ch-agegate { position: relative; overflow: hidden; }
       .ch-agegate::after {
         content: ""; position: absolute; top: 0; right: 0; width: 150px; height: 150px;
-        background: ${WEB} top right / contain no-repeat; opacity: 0.2; pointer-events: none;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23B9B2D9' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.2; pointer-events: none;
       }
       .ch-agegate .ch-logo-mark { box-shadow: 0 0 40px rgba(224,138,60,0.2); }
 `;

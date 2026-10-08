@@ -2566,6 +2566,90 @@ export default function CustomerHub() {
 }
 
 /* ============================================================================
+   TEMPORADA: HALLOWEEN
+   Capa de decoración 100% CSS (sin cambiar lógica ni componentes). La marca
+   se queda igual: mismo fondo, mismo dorado en botones y textos. Solo se suman
+   dos acentos suaves (calabaza y violeta) y unos pocos detalles discretos:
+   resplandor ambiental, murciélago junto al nombre, luna en el saldo,
+   telaraña en las promos y en la verificación de edad.
+   Para quitarlo todo después del 2 de noviembre: HALLOWEEN_THEME = false.
+============================================================================ */
+const HALLOWEEN_THEME = true;
+const HALLOWEEN_CSS = `
+      /* --- Halloween: acentos --- */
+      .ch-root {
+        --pumpkin: #E08A3C;
+        --pumpkin-dim: #8F5A2B;
+        --violet: #A593E0;
+        background-image:
+          radial-gradient(520px 260px at 100% 0%, rgba(224,138,60,0.075), transparent 70%),
+          radial-gradient(480px 320px at 0% 100%, rgba(165,147,224,0.06), transparent 70%);
+        background-repeat: no-repeat;
+      }
+
+      /* Encabezado: línea inferior que pasa de dorado a calabaza, y un murciélago junto al nombre */
+      .ch-header {
+        border-bottom-color: transparent;
+        border-image: linear-gradient(90deg, var(--gold-dim), var(--pumpkin-dim) 55%, var(--border)) 1;
+      }
+      .ch-logo-name::after {
+        content: ""; display: inline-block; width: 18px; height: 9px; margin-left: 8px;
+        vertical-align: 1px; opacity: 0.85;
+        background: ${BAT} center / contain no-repeat;
+      }
+
+      /* Saldo: luna creciente con dos estrellitas en la esquina */
+      .ch-hero-points {
+        position: relative; overflow: hidden;
+        border-color: rgba(224,138,60,0.28);
+      }
+      .ch-hero-points::after {
+        content: ""; position: absolute; top: 18px; right: 20px; width: 22px; height: 22px;
+        border-radius: 50%; box-shadow: inset -6px 2px 0 0 #E9D8A6; opacity: 0.8; pointer-events: none;
+      }
+      .ch-hero-points::before {
+        content: ""; position: absolute; top: 26px; right: 58px; width: 2px; height: 2px; border-radius: 50%;
+        background: #E9D8A6; pointer-events: none;
+        box-shadow: -14px 10px 0 0 rgba(233,216,166,0.55), -28px -3px 0 0 rgba(233,216,166,0.4);
+      }
+      .ch-progress-fill { background: linear-gradient(90deg, var(--gold), var(--pumpkin)); }
+
+      /* Promociones: tono cálido y telaraña en la esquina */
+      .ch-promo-card {
+        position: relative; overflow: hidden;
+        background: linear-gradient(135deg, #2B1E14, var(--surface));
+        border-color: var(--pumpkin-dim);
+      }
+      .ch-promo-card::after {
+        content: ""; position: absolute; top: 0; right: 0; width: 84px; height: 84px;
+        background: ${WEB} top right / contain no-repeat; opacity: 0.22; pointer-events: none;
+      }
+      .ch-eyebrow { color: var(--pumpkin); }
+
+      /* Barra de navegación: rayita calabaza en la pestaña activa */
+      .ch-bottom-nav { border-top-color: var(--pumpkin-dim); }
+      .ch-bottom-item { position: relative; }
+      .ch-bottom-item.active::after {
+        content: ""; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+        width: 18px; height: 2px; border-radius: 2px; background: var(--pumpkin);
+      }
+      @media (min-width: 900px) {
+        .ch-bottom-nav { border-right-color: var(--pumpkin-dim); }
+        .ch-bottom-item.active::after {
+          top: 22%; bottom: 22%; left: 0; width: 2px; height: auto; transform: none;
+        }
+      }
+
+      /* Verificación de edad (primera pantalla): telaraña grande y brillo cálido en el logo */
+      .ch-agegate { position: relative; overflow: hidden; }
+      .ch-agegate::after {
+        content: ""; position: absolute; top: 0; right: 0; width: 150px; height: 150px;
+        background: ${WEB} top right / contain no-repeat; opacity: 0.2; pointer-events: none;
+      }
+      .ch-agegate .ch-logo-mark { box-shadow: 0 0 40px rgba(224,138,60,0.2); }
+`;
+
+/* ============================================================================
    ESTILOS
 ============================================================================ */
 function GlobalStyle() {
@@ -2927,6 +3011,7 @@ function GlobalStyle() {
       .pac-matched { color: #D4AF6A !important; font-weight: 600 !important; }
       .pac-item span:not(.pac-item-query):not(.pac-matched) { color: #67716A !important; }
       .pac-icon { display: none !important; }
+      ${HALLOWEEN_THEME ? HALLOWEEN_CSS : ""}
     `}</style>
   );
 }

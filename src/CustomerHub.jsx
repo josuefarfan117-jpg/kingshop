@@ -2567,86 +2567,182 @@ export default function CustomerHub() {
 
 /* ============================================================================
    TEMPORADA: HALLOWEEN
-   Capa de decoración 100% CSS (sin cambiar lógica ni componentes). La marca
-   se queda igual: mismo fondo, mismo dorado en botones y textos. Solo se suman
-   dos acentos suaves (calabaza y violeta) y unos pocos detalles discretos:
-   resplandor ambiental, murciélago junto al nombre, luna en el saldo,
-   telaraña en las promos y en la verificación de edad.
+   Tema completo, solo CSS (no cambia lógica ni componentes). Reemplaza la
+   paleta por una noche morada con calabaza como acento (el dorado de la marca
+   pasa a naranja calabaza), y agrega: escena de cementerio de fondo en TODAS las
+   pestañas (cielo, luna, árboles secos, lápidas, calabaza, neblina, murciélagos), murciélago
+   volando por el encabezado junto al logo, luna en el saldo y telarañas en
+   las tarjetas. El logo y el nombre de la tienda no se tocan.
    Para quitarlo todo después del 2 de noviembre: HALLOWEEN_THEME = false.
 ============================================================================ */
 const HALLOWEEN_THEME = true;
 const HALLOWEEN_CSS = `
-      /* --- Halloween: acentos --- */
+      /* ============ Paleta: de verde-negro a morado-noche, con calabaza como acento ============ */
       .ch-root {
-        --pumpkin: #E08A3C;
-        --pumpkin-dim: #8F5A2B;
-        --violet: #A593E0;
+        --bg: #0E0A15;
+        --surface: rgba(23,17,31,0.84);
+        --surface-2: rgba(33,24,40,0.88);
+        --border: #35284B;
+        --text: #F2EEF8;
+        --text-dim: #ABA2BD;
+        --text-faint: #716885;
+        --gold: #F29A3D;
+        --gold-dim: #9C6129;
+        --green: #8FCB82;
+        --rust: #E36A76;
+        --pumpkin: #F29A3D;
+        --pumpkin-dim: #9C6129;
+        --violet: #B39DF0;
+        isolation: isolate;
+        background:
+          radial-gradient(620px 320px at 100% 0%, rgba(242,154,61,0.13), transparent 70%),
+          radial-gradient(560px 360px at 0% 100%, rgba(139,92,246,0.14), transparent 70%),
+          var(--bg);
+      }
+      html, body { background: #0E0A15; }
+
+      /* ============ Fondo de TODA la página (todas las pestañas): escena de cementerio nocturno ============
+         Cielo morado con resplandor naranja en el horizonte, luna, murciélagos y estrellas,
+         árboles secos, colinas con lápidas y cruces, calabaza encendida y neblina. */
+      .ch-root::before {
+        content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
         background-image:
-          radial-gradient(520px 260px at 100% 0%, rgba(224,138,60,0.075), transparent 70%),
-          radial-gradient(480px 320px at 0% 100%, rgba(165,147,224,0.06), transparent 70%);
-        background-repeat: no-repeat;
+          linear-gradient(to top, rgba(150,130,200,0.22), rgba(150,130,200,0.07) 130px, transparent 240px),
+          linear-gradient(#110B1B, #110B1B),
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 480 240' width='480' height='240'%3E%3Cpath d='M0 150Q120 118 240 150T480 150V240H0Z' fill='%231F1633'/%3E%3Cpath d='M70 162V136Q70 128 78 128Q86 128 86 136V162Z' fill='%231F1633'/%3E%3Cpath d='M170 156V120M162 131H178' stroke='%231F1633' stroke-width='6' stroke-linecap='round' fill='none'/%3E%3Cpath d='M250 162V138Q250 130 258 130Q266 130 266 138V162Z' fill='%231F1633'/%3E%3Cpath d='M330 162V140Q330 132 338 132Q346 132 346 140V162Z' fill='%231F1633'/%3E%3Cpath d='M420 156V124M412 135H428' stroke='%231F1633' stroke-width='6' stroke-linecap='round' fill='none'/%3E%3Cpath d='M0 200Q120 176 240 200T480 200V240H0Z' fill='%23110B1B'/%3E%3Cpath d='M26 216V175.0Q26 160 41.0 160Q56 160 56 175.0V216Z' fill='%23110B1B'/%3E%3Cpath d='M118 216V150M110 161H126' stroke='%23110B1B' stroke-width='9' stroke-linecap='round' fill='none'/%3E%3Cpath d='M190 216L196 170L224 174L222 216Z' fill='%23110B1B'/%3E%3Cpath d='M300 216V160.0Q300 142 318.0 142Q336 142 336 160.0V216Z' fill='%23110B1B'/%3E%3Cpath d='M382 216V181.0Q382 170 393.0 170Q404 170 404 181.0V216Z' fill='%23110B1B'/%3E%3Cpath d='M446 216V158M438 169H454' stroke='%23110B1B' stroke-width='8' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='256' cy='192' r='30' fill='%23F29A3D' fill-opacity='.16'/%3E%3Cg transform='translate(238 176) scale(1.5)'%3E%3Cellipse cx='12' cy='13' rx='10.5' ry='8' fill='%23D9741F'/%3E%3Cellipse cx='7.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='16.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='12' cy='13' rx='3.6' ry='7.8' fill='%23FFA645'/%3E%3Cpath d='M11 5.4Q10.6 2 14.2 1.6L14.4 3.4Q12.6 3.4 13.2 5.6Z' fill='%236FA05A'/%3E%3Cpolygon points='7.6,10.6 10.4,10.6 9,13.2' fill='%232A1408'/%3E%3Cpolygon points='13.6,10.6 16.4,10.6 15,13.2' fill='%232A1408'/%3E%3Cpath d='M7.6 16Q9 18.6 12 17.2Q15 18.6 16.4 16Q12 15 7.6 16Z' fill='%232A1408'/%3E%3C/g%3E%3C/svg%3E"),
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 420' width='200' height='420'%3E%3Cg fill='none' stroke='%23110B1B' stroke-linecap='round'%3E%3Cpath d='M100 420C96 340 108 290 98 220' stroke-width='13'/%3E%3Cpath d='M99 300Q60 270 32 238M99 250Q132 222 166 206M98 220Q90 190 100 150M100 150Q110 130 122 108M100 150Q86 134 80 110' stroke-width='6'/%3E%3Cpath d='M32 238Q22 222 12 198M60 277Q50 252 56 226M166 206Q182 190 196 166M140 226Q146 198 138 172M122 108Q132 96 146 90M80 110Q70 98 58 94M32 238Q20 244 8 242' stroke-width='3.5'/%3E%3C/g%3E%3C/svg%3E"),
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 420' width='200' height='420'%3E%3Cg transform='translate(200 0) scale(-1 1)'%3E%3Cg fill='none' stroke='%23110B1B' stroke-linecap='round'%3E%3Cpath d='M100 420C96 340 108 290 98 220' stroke-width='13'/%3E%3Cpath d='M99 300Q60 270 32 238M99 250Q132 222 166 206M98 220Q90 190 100 150M100 150Q110 130 122 108M100 150Q86 134 80 110' stroke-width='6'/%3E%3Cpath d='M32 238Q22 222 12 198M60 277Q50 252 56 226M166 206Q182 190 196 166M140 226Q146 198 138 172M122 108Q132 96 146 90M80 110Q70 98 58 94M32 238Q20 244 8 242' stroke-width='3.5'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E"),
+          radial-gradient(circle at calc(100% - 64px) 92px, rgba(244,231,190,0.95) 0 30px, rgba(244,231,190,0.28) 32px, rgba(244,231,190,0.1) 80px, transparent 150px),
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 520' width='400' height='520'%3E%3Cg transform='translate(46 62) rotate(-12) scale(1.7) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.2' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(262 34) rotate(8) scale(1.15) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.16' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(342 176) rotate(-6) scale(2.1) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.18' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(122 236) rotate(15) scale(1.25) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.15' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(30 372) rotate(10) scale(2.0) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.19' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(236 338) rotate(-10) scale(1.5) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.16' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(348 452) rotate(5) scale(1.1) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.14' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(152 480) rotate(-4) scale(1.8) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.17' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Cg transform='translate(190 120) rotate(20) scale(0.9) translate(-12 -6)'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='0.13' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/g%3E%3Ccircle cx='90' cy='150' r='1.3' fill='%23EBDDB0' fill-opacity='0.35'/%3E%3Ccircle cx='300' cy='100' r='1.1' fill='%23EBDDB0' fill-opacity='0.3'/%3E%3Ccircle cx='200' cy='40' r='1.0' fill='%23EBDDB0' fill-opacity='0.3'/%3E%3Ccircle cx='60' cy='270' r='1.2' fill='%23EBDDB0' fill-opacity='0.28'/%3E%3Ccircle cx='310' cy='300' r='1.4' fill='%23EBDDB0' fill-opacity='0.32'/%3E%3Ccircle cx='130' cy='380' r='1.0' fill='%23EBDDB0' fill-opacity='0.28'/%3E%3Ccircle cx='270' cy='500' r='1.2' fill='%23EBDDB0' fill-opacity='0.3'/%3E%3Ccircle cx='20' cy='470' r='1.0' fill='%23EBDDB0' fill-opacity='0.25'/%3E%3Ccircle cx='380' cy='60' r='1.0' fill='%23EBDDB0' fill-opacity='0.25'/%3E%3Ccircle cx='210' cy='430' r='1.1' fill='%23EBDDB0' fill-opacity='0.3'/%3E%3Cg transform='translate(268 236) scale(1.1)' opacity='.22'%3E%3Cellipse cx='12' cy='13' rx='10.5' ry='8' fill='%23D9741F'/%3E%3Cellipse cx='7.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='16.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='12' cy='13' rx='3.6' ry='7.8' fill='%23FFA645'/%3E%3Cpath d='M11 5.4Q10.6 2 14.2 1.6L14.4 3.4Q12.6 3.4 13.2 5.6Z' fill='%236FA05A'/%3E%3Cpolygon points='7.6,10.6 10.4,10.6 9,13.2' fill='%232A1408'/%3E%3Cpolygon points='13.6,10.6 16.4,10.6 15,13.2' fill='%232A1408'/%3E%3Cpath d='M7.6 16Q9 18.6 12 17.2Q15 18.6 16.4 16Q12 15 7.6 16Z' fill='%232A1408'/%3E%3C/g%3E%3Cg transform='translate(56 160) scale(0.8)' opacity='.16'%3E%3Cellipse cx='12' cy='13' rx='10.5' ry='8' fill='%23D9741F'/%3E%3Cellipse cx='7.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='16.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='12' cy='13' rx='3.6' ry='7.8' fill='%23FFA645'/%3E%3Cpath d='M11 5.4Q10.6 2 14.2 1.6L14.4 3.4Q12.6 3.4 13.2 5.6Z' fill='%236FA05A'/%3E%3Cpolygon points='7.6,10.6 10.4,10.6 9,13.2' fill='%232A1408'/%3E%3Cpolygon points='13.6,10.6 16.4,10.6 15,13.2' fill='%232A1408'/%3E%3Cpath d='M7.6 16Q9 18.6 12 17.2Q15 18.6 16.4 16Q12 15 7.6 16Z' fill='%232A1408'/%3E%3C/g%3E%3C/svg%3E"),
+          radial-gradient(ellipse 90% 34% at 50% 100%, rgba(242,154,61,0.30), transparent 72%),
+          linear-gradient(180deg, #0F0818 0%, #1A0E2C 50%, #2B1530 85%, #3A1C2B 100%);
+        background-repeat: no-repeat, no-repeat, repeat-x, no-repeat, no-repeat, no-repeat, repeat, no-repeat, no-repeat;
+        background-size: 100% 100%, 100% 56px, 480px 240px, 190px 400px, 190px 400px, 100% 100%, 400px 520px, 100% 100%, 100% 100%;
+        background-position: 0 0, 0 100%, 0 calc(100% - 52px), left -34px bottom 50px, right -34px bottom 50px, 0 0, 0 0, 0 0, 0 0;
+      }
+      @media (min-width: 900px) {
+        .ch-root::before {
+          background-size: 100% 100%, 100% 0, 480px 240px, 260px 540px, 260px 540px, 100% 100%, 400px 520px, 100% 100%, 100% 100%;
+          background-position: 0 0, 0 100%, 0 100%, left 260px bottom 0, right 24px bottom 0, 0 0, 0 0, 0 0, 0 0;
+        }
       }
 
-      /* Encabezado: línea inferior que pasa de dorado a calabaza, y un murciélago junto al nombre */
+      /* ============ Encabezado: logo + nombre conviven con murciélago y calabaza ============ */
       .ch-header {
+        background: rgba(15,10,22,0.88);
         border-bottom-color: transparent;
-        border-image: linear-gradient(90deg, var(--gold-dim), var(--pumpkin-dim) 55%, var(--border)) 1;
+        border-image: linear-gradient(90deg, var(--pumpkin-dim), #5A3C8C 60%, var(--border)) 1;
       }
+      .ch-logo-mark { box-shadow: 0 0 22px rgba(242,154,61,0.28); }
       .ch-logo-name::after {
         content: ""; display: inline-block; width: 18px; height: 9px; margin-left: 8px;
-        vertical-align: 1px; opacity: 0.85;
-        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Cpolygon fill='%23A593E0' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/svg%3E") center / contain no-repeat;
+        vertical-align: 1px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='1' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
+      .ch-header::after {
+        content: ""; position: absolute; left: -8%; top: 8px; width: 26px; height: 13px;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Cpolygon fill='%23B39DF0' fill-opacity='1' points='12,3 13,1.2 13.8,3.2 17,2.2 22,1 20.8,4 22.4,6.6 19.6,5.8 17.6,8.2 15.4,6.2 13.6,10.4 12,8.4 10.4,10.4 8.6,6.2 6.4,8.2 4.4,5.8 1.6,6.6 3.2,4 2,1 7,2.2 10.2,3.2 11,1.2'/%3E%3C/svg%3E") center / contain no-repeat; opacity: 0.75; pointer-events: none;
+        animation: ch-fly 17s linear infinite, ch-flap .42s ease-in-out infinite alternate;
+      }
+      @keyframes ch-fly {
+        0% { left: -8%; top: 6px; }
+        25% { top: 30px; }
+        50% { top: 10px; }
+        75% { top: 34px; }
+        100% { left: 104%; top: 8px; }
+      }
+      @keyframes ch-flap { from { transform: scaleY(1); } to { transform: scaleY(0.55); } }
+
+      /* ============ Títulos de sección con calabaza ============ */
+      .ch-section-title::after {
+        content: ""; display: inline-block; width: 20px; height: 18px; margin-left: 9px;
+        vertical-align: -2px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 21'%3E%3Cellipse cx='12' cy='13' rx='10.5' ry='8' fill='%23D9741F'/%3E%3Cellipse cx='7.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='16.5' cy='13' rx='5' ry='7.6' fill='%23F28F2E'/%3E%3Cellipse cx='12' cy='13' rx='3.6' ry='7.8' fill='%23FFA645'/%3E%3Cpath d='M11 5.4Q10.6 2 14.2 1.6L14.4 3.4Q12.6 3.4 13.2 5.6Z' fill='%236FA05A'/%3E%3Cpolygon points='7.6,10.6 10.4,10.6 9,13.2' fill='%232A1408'/%3E%3Cpolygon points='13.6,10.6 16.4,10.6 15,13.2' fill='%232A1408'/%3E%3Cpath d='M7.6 16Q9 18.6 12 17.2Q15 18.6 16.4 16Q12 15 7.6 16Z' fill='%232A1408'/%3E%3C/svg%3E") center / contain no-repeat;
       }
 
-      /* Saldo: luna creciente con dos estrellitas en la esquina */
+      /* ============ Saldo: luna con estrellas ============ */
       .ch-hero-points {
         position: relative; overflow: hidden;
-        border-color: rgba(224,138,60,0.28);
+        border-color: rgba(242,154,61,0.35);
+        background: linear-gradient(165deg, #261A33, var(--surface));
       }
       .ch-hero-points::after {
-        content: ""; position: absolute; top: 18px; right: 20px; width: 22px; height: 22px;
-        border-radius: 50%; box-shadow: inset -6px 2px 0 0 #E9D8A6; opacity: 0.8; pointer-events: none;
+        content: ""; position: absolute; top: 18px; right: 20px; width: 24px; height: 24px;
+        border-radius: 50%; box-shadow: inset -7px 2px 0 0 #EBDDB0; opacity: 0.9; pointer-events: none;
       }
       .ch-hero-points::before {
-        content: ""; position: absolute; top: 26px; right: 58px; width: 2px; height: 2px; border-radius: 50%;
-        background: #E9D8A6; pointer-events: none;
-        box-shadow: -14px 10px 0 0 rgba(233,216,166,0.55), -28px -3px 0 0 rgba(233,216,166,0.4);
+        content: ""; position: absolute; top: 26px; right: 60px; width: 2px; height: 2px; border-radius: 50%;
+        background: #EBDDB0; pointer-events: none;
+        box-shadow: -14px 10px 0 0 rgba(235,221,176,0.6), -28px -3px 0 0 rgba(235,221,176,0.45);
       }
-      .ch-progress-fill { background: linear-gradient(90deg, var(--gold), var(--pumpkin)); }
+      .ch-progress-fill { background: linear-gradient(90deg, #F29A3D, #FFC46B); }
+      .ch-points-num { text-shadow: 0 0 24px rgba(242,154,61,0.25); }
 
-      /* Promociones: tono cálido y telaraña en la esquina */
+      /* ============ Telarañas en las esquinas de las tarjetas ============ */
+      .ch-card, .ch-reward-card, .ch-product-card, .ch-promo-card { position: relative; }
+      .ch-card::after, .ch-reward-card::after, .ch-product-card::after {
+        content: ""; position: absolute; top: 0; right: 0; width: 58px; height: 58px;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23C9C1EA' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.17; pointer-events: none;
+        border-top-right-radius: inherit;
+      }
       .ch-promo-card {
-        position: relative; overflow: hidden;
-        background: linear-gradient(135deg, #2B1E14, var(--surface));
+        background: linear-gradient(135deg, #34200F, var(--surface));
         border-color: var(--pumpkin-dim);
       }
       .ch-promo-card::after {
-        content: ""; position: absolute; top: 0; right: 0; width: 84px; height: 84px;
-        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23B9B2D9' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.22; pointer-events: none;
+        content: ""; position: absolute; top: 0; right: 0; width: 96px; height: 96px;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23C9C1EA' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.26; pointer-events: none;
+        border-top-right-radius: inherit;
       }
-      .ch-eyebrow { color: var(--pumpkin); }
+      .ch-quick-btn, .ch-model-tab, .ch-pay-option { background: var(--surface); }
+      .ch-product-art, .ch-reward-art, .ch-model-reference { background: var(--surface-2); }
 
-      /* Barra de navegación: rayita calabaza en la pestaña activa */
-      .ch-bottom-nav { border-top-color: var(--pumpkin-dim); }
+      /* ============ Barra de navegación ============ */
+      .ch-bottom-nav {
+        background: rgba(18,12,26,0.96); border-top-color: var(--pumpkin-dim);
+      }
       .ch-bottom-item { position: relative; }
       .ch-bottom-item.active::after {
         content: ""; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
-        width: 18px; height: 2px; border-radius: 2px; background: var(--pumpkin);
+        width: 20px; height: 2px; border-radius: 2px; background: var(--pumpkin);
+        box-shadow: 0 0 10px rgba(242,154,61,0.7);
       }
       @media (min-width: 900px) {
-        .ch-bottom-nav { border-right-color: var(--pumpkin-dim); }
+        .ch-bottom-nav { background: rgba(18,12,26,0.98); border-right-color: var(--pumpkin-dim); }
         .ch-bottom-item.active::after {
           top: 22%; bottom: 22%; left: 0; width: 2px; height: auto; transform: none;
         }
       }
 
-      /* Verificación de edad (primera pantalla): telaraña grande y brillo cálido en el logo */
+      /* ============ Menú lateral, ventanas y avisos ============ */
+      .ch-side-panel { background: #17111F; }
+      .ch-modal { background: #17111F; }
+      .ch-input { background: rgba(14,10,21,0.72); }
+      .ch-side-backdrop, .ch-modal-backdrop { background: rgba(8,5,14,0.8); }
+      .ch-side-link { border-bottom-color: var(--border); }
+
+      /* ============ Verificación de edad (primera pantalla) ============ */
       .ch-agegate { position: relative; overflow: hidden; }
-      .ch-agegate::after {
-        content: ""; position: absolute; top: 0; right: 0; width: 150px; height: 150px;
-        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23B9B2D9' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.2; pointer-events: none;
+      .ch-agegate::before {
+        content: ""; position: absolute; top: 0; left: 0; width: 170px; height: 170px;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23C9C1EA' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.24; pointer-events: none;
+        transform: scaleX(-1);
       }
-      .ch-agegate .ch-logo-mark { box-shadow: 0 0 40px rgba(224,138,60,0.2); }
+      .ch-agegate::after {
+        content: ""; position: absolute; top: 0; right: 0; width: 170px; height: 170px;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23C9C1EA' stroke-width='1' stroke-linecap='round'%3E%3Cpath d='M100 0L0 0M100 0L8 35M100 0L28 66M100 0L60 92M100 0L100 100'/%3E%3Cpath d='M65 0Q75 4.6 67.8 12.3Q78.5 13.3 74.8 23.1Q85.3 20.8 86 32.2Q94.8 25.2 100 35'/%3E%3Cpath d='M40 0Q56.8 7.9 44.8 21Q63.1 22.7 56.8 39.6Q74.8 35.6 76 55.2Q91 43.2 100 60'/%3E%3Cpath d='M15 0Q38.8 11.2 21.8 29.8Q51.2 32.3 38.8 56.1Q65.3 50.4 66 78.2Q87.3 61.2 100 85'/%3E%3C/g%3E%3C/svg%3E") top right / contain no-repeat; opacity: 0.24; pointer-events: none;
+      }
+      .ch-agegate .ch-logo-mark { box-shadow: 0 0 46px rgba(242,154,61,0.32); }
+
+      /* ============ Menú de direcciones de Google (vive fuera de .ch-root) ============ */
+      .pac-container { background-color: #17111F !important; border-color: #35284B !important; }
+      .pac-item { color: #F2EEF8 !important; background-color: #17111F !important; border-top-color: #35284B !important; }
+      .pac-item:hover, .pac-item-selected { background-color: #211828 !important; }
+      .pac-item-query { color: #F2EEF8 !important; }
+      .pac-matched { color: #F29A3D !important; }
+      .pac-item span:not(.pac-item-query):not(.pac-matched) { color: #716885 !important; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .ch-header::after { animation: none; display: none; }
+      }
 `;
 
 /* ============================================================================

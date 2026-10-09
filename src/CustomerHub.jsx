@@ -779,6 +779,37 @@ function computeCartPricing(cartList) {
   const savings = modelBreakdown.reduce((s, m) => s + m.savings, 0);
   return { totalQty, total, naiveTotal, savings, modelBreakdown };
 }
+// Misma regla de promo 2x, pero para los renglones de un PEDIDO ya armado
+// (items = [{ productId, modelId, name, qty, price }]). Se usa cuando el admin
+// cambia cantidades de un pedido pendiente, o al aplicar la promo a un pedido
+// que se calculó mal. Agrupa por MODELO (todos los sabores del mismo modelo
+// suman juntos): por cada 2 piezas cobra el precio dúo, y la pieza suelta
+// cobra el precio individual. Ej.: 4 -> 2 promos, 5 -> 2 promos + 1 individual.
+function resolveItemModelId(item) {
+  if (item.modelId) return item.modelId;
+  const p = PRODUCTS.find((x) => x.id === item.productId)
+    || (item.dbId != null ? PRODUCTS.find((x) => x.dbId === item.dbId) : null)
+    || PRODUCTS.find((x) => x.name === item.name);
+  return p ? p.modelId : null;
+}
+function computeItemsPricing(items) {
+  const byModel = {};
+  let subtotal = 0;
+  let naiveTotal = 0;
+  for (const it of items) {
+    naiveTotal += it.price * it.qty;
+    const model = MODELS.find((m) => m.id === resolveItemModelId(it));
+    if (!model) { subtotal += it.price * it.qty; continue; } // sin modelo conocido: precio normal
+    (byModel[model.id] = byModel[model.id] || { model, qty: 0 }).qty += it.qty;
+  }
+  let bundles = 0;
+  for (const { model, qty } of Object.values(byModel)) {
+    const b = Math.floor(qty / 2);
+    bundles += b;
+    subtotal += b * model.priceDuo + (qty % 2) * model.priceSingle;
+  }
+  return { subtotal, naiveTotal, savings: naiveTotal - subtotal, bundles };
+}
 function describeBundleBreakdown(pricing) {
   if (pricing.modelBreakdown.length === 0) return "";
   return pricing.modelBreakdown
@@ -1838,12 +1869,34 @@ export default function CustomerHub() {
         if (ord.id !== orderId) return ord;
         const items = ord.items.map((it, idx) => idx === itemIndex ? { ...it, qty: Math.max(0, newQty) } : it)
           .filter((it) => it.qty > 0);
-        const subtotal = items.reduce((s, it) => s + it.price * it.qty, 0);
+        // Antes: suma simple precio x cantidad (cobraba todo a precio
+        // individual y se perdía la promo 2x). Ahora recalcula con promo.
+        const subtotal = computeItemsPricing(items).subtotal;
         const creditUsed = Math.min(ord.creditUsed || 0, subtotal);
         const total = subtotal - creditUsed;
         return { ...ord, items, subtotal, creditUsed, total, pointsEarned: Math.round(total * POINTS_PER_PURCHASE_RATE) };
       }),
     }));
+  }
+
+  // Recalcula un pedido PENDIENTE ya hecho con la promoción 2x por modelo y
+  // guarda el nuevo total en Supabase. Sirve para corregir pedidos que se
+  // cobraron a precio individual.
+  function applyPromoToOrder(customerId, orderId) {
+    const ord = (orders[customerId] || []).find((o) => o.id === orderId);
+    if (!ord || ord.status !== "Pendiente") return;
+    persistOrderEdit(customerId, orderId);
+    setOrders((o) => ({
+      ...o,
+      [customerId]: (o[customerId] || []).map((x) => {
+        if (x.id !== orderId) return x;
+        const subtotal = computeItemsPricing(x.items).subtotal;
+        const creditUsed = Math.min(x.creditUsed || 0, subtotal);
+        const total = subtotal - creditUsed;
+        return { ...x, subtotal, creditUsed, total, pointsEarned: Math.round(total * POINTS_PER_PURCHASE_RATE) };
+      }),
+    }));
+    showToast("✅ Promoción aplicada al pedido");
   }
 
   // Confirma un pedido: primero lo guarda de verdad en Supabase (pedido +
@@ -2506,6 +2559,7 @@ export default function CustomerHub() {
               onConfirmOrder={confirmOrder}
               onCancelOrder={cancelOrder}
               onUpdateOrderItemQty={updateOrderItemQty}
+              onApplyPromoToOrder={applyPromoToOrder}
               onRegisterManualSale={registerManualSale}
               onSetStock={setProductStock}
               catalogVersion={catalogVersion}
@@ -4808,7 +4862,7 @@ function LockedState({ onLogin, message, cta }) {
    son demo/locales; para que reflejen a todos los clientes reales hace falta
    mover customers/orders a un backend (ver nota de arquitectura al final).
 ============================================================================ */
-function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRefresh, refreshing, soundOn, onToggleSound, rewardsToDeliver = [], onMarkRewardDelivered }) {
+function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onApplyPromoToOrder, onRefresh, refreshing, soundOn, onToggleSound, rewardsToDeliver = [], onMarkRewardDelivered }) {
   const customerById = (id) => customers.find((c) => c.id === id);
   const statusColor = (s) => s === "Completado" ? "var(--green)" : s === "Cancelado" ? "var(--text-faint)" : "var(--gold)";
   const history = [...stats.allOrders].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -4916,6 +4970,23 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
               ))}
             </div>
             <div style={{ borderTop: "1px solid var(--border)", marginTop: 8, paddingTop: 8 }}>
+              {(() => {
+                const promo = computeItemsPricing(order.items);
+                const currentSubtotal = order.subtotal ?? (order.total + (order.creditUsed || 0));
+                if (promo.subtotal === currentSubtotal) {
+                  return promo.savings > 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--green)", marginBottom: 6 }}>Promo 2x aplicada · ahorro {formatMoney(promo.savings)}</div>
+                  ) : null;
+                }
+                return (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, color: "var(--gold)", marginBottom: 6 }}>
+                      Este pedido no trae la promo 2x: con ella el subtotal sería {formatMoney(promo.subtotal)} (ahorro {formatMoney(currentSubtotal - promo.subtotal)}).
+                    </div>
+                    <button className="ch-btn ch-btn-secondary ch-btn-block" onClick={() => onApplyPromoToOrder(order.customerId, order.id)}>Aplicar promoción a este pedido</button>
+                  </div>
+                );
+              })()}
               {order.creditUsed > 0 && (
                 <>
                   {/* Aviso para quien cobra: este pedido trae crédito aplicado,
@@ -6084,7 +6155,7 @@ function AdminGateView({ onSuccess, onCancel }) {
   );
 }
 
-function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, soundOn, onToggleSound, ordersLoading, rewardsToDeliver, onMarkRewardDelivered }) {
+function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrder, onUpdateOrderItemQty, onApplyPromoToOrder, onRegisterManualSale, onSetStock, catalogVersion, onAddModel, onUpdateModel, onDeleteModel, onAddFlavor, onDeleteFlavor, onExit, onRefreshOrders, soundOn, onToggleSound, ordersLoading, rewardsToDeliver, onMarkRewardDelivered }) {
   const [tab, setTab] = useState("pedidos");
   const stats = useMemo(() => computeAdminStats(customers, orders), [customers, orders]);
 
@@ -6153,6 +6224,7 @@ function AdminView({ customers, orders, stockLevels, onConfirmOrder, onCancelOrd
           onConfirmOrder={onConfirmOrder}
           onCancelOrder={onCancelOrder}
           onUpdateOrderItemQty={onUpdateOrderItemQty}
+          onApplyPromoToOrder={onApplyPromoToOrder}
           onRefresh={onRefreshOrders}
           soundOn={soundOn}
           onToggleSound={onToggleSound}

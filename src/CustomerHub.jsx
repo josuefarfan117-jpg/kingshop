@@ -2693,6 +2693,10 @@ const HALLOWEEN_CSS = `
         border-top-right-radius: inherit;
       }
       .ch-quick-btn, .ch-model-tab, .ch-pay-option { background: var(--surface); }
+      /* Los estados "seleccionado" se vuelven a declarar DESPUÉS de la regla de arriba: esa regla
+         pisaba el fondo naranja de la pestaña activa y dejaba texto oscuro sobre fondo oscuro. */
+      .ch-model-tab.ch-model-tab-active { background: var(--gold); color: #14150F; border-color: var(--gold-dim); }
+      .ch-pay-option.ch-pay-option-active { background: rgba(242,154,61,0.12); border-color: var(--gold); }
       .ch-product-art, .ch-reward-art, .ch-model-reference { background: var(--surface-2); }
 
       /* ============ Barra de navegación ============ */

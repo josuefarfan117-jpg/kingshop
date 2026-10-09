@@ -2912,6 +2912,8 @@ function GlobalStyle() {
       @media (hover: hover) and (pointer: fine) {
         .ch-model-tabs-wrap:hover .ch-model-tabs-arrow { display: flex; }
       }
+      .ch-model-tabs-wrap-always .ch-model-tabs-arrow { display: flex; }
+      .ch-model-tabs-wrap-always .ch-model-tabs { margin-top: 0; }
       .ch-model-tab {
         flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
         padding: 9px 14px; border-radius: 999px; border: 1px solid var(--border);
@@ -3319,7 +3321,7 @@ function Landing({ onNav, merchandisingPicks, onGoToModel }) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 26 }}>
-        <a className="ch-btn ch-btn-primary ch-btn-block ch-link-plain" href={waLink("Hola, quiero hacer un pedido.")} target="_blank" rel="noopener noreferrer">Hacer pedido</a>
+        <button className="ch-btn ch-btn-primary ch-btn-block" onClick={() => onNav("catalog")}>Hacer pedido</button>
         <div style={{ display: "flex", gap: 10 }}>
           <button className="ch-btn ch-btn-secondary" style={{ flex: 1 }} onClick={() => onNav("rewards")}>Ver recompensas</button>
           <button className="ch-btn ch-btn-secondary" style={{ flex: 1 }} onClick={() => onNav("catalog")}>Ver catálogo</button>
@@ -3572,7 +3574,7 @@ function Dashboard({ customer, transactions, wallet, merchandisingPicks, onGoToM
       <MerchandisingRow picks={merchandisingPicks} onSelect={onGoToModel} />
 
       <div className="ch-quick-grid">
-        <a className="ch-quick-btn ch-link-plain" href={waLink("Hola, quiero hacer un pedido.")} target="_blank" rel="noopener noreferrer"><ShoppingBag size={19} color="var(--gold)" />Hacer pedido</a>
+        <button className="ch-quick-btn" onClick={() => onNav("catalog")}><ShoppingBag size={19} color="var(--gold)" />Hacer pedido</button>
         <button className="ch-quick-btn" onClick={() => onNav("rewards")}><Gift size={19} color="var(--gold)" />Ver recompensas</button>
         <button className="ch-quick-btn" onClick={() => onNav("catalog")}><Package size={19} color="var(--gold)" />Ver catálogo</button>
         <button className="ch-quick-btn" onClick={() => onNav("referrals")}><Users size={19} color="var(--gold)" />Invitar a un amigo</button>
@@ -5416,6 +5418,10 @@ function AdminManualSaleTab({ customers, stockLevels, onRegisterManualSale }) {
   const [catalogTab, setCatalogTab] = useState(MODELS[0].id);
   const [manualCart, setManualCart] = useState({}); // { productId: qty }
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', text }
+  const modelTabsRef = useRef(null);
+  const scrollModelTabs = (dir) => {
+    modelTabsRef.current?.scrollBy({ left: dir * 220, behavior: "smooth" });
+  };
 
   const phoneMatch = findCustomerByPhone(customers, phone);
   const model = MODELS.find((m) => m.id === catalogTab) || MODELS[0];
@@ -5516,21 +5522,29 @@ function AdminManualSaleTab({ customers, stockLevels, onRegisterManualSale }) {
       </div>
 
       <div className="ch-section-title" style={{ marginTop: 20, marginBottom: 0 }}>Producto(s)</div>
-      <div className="ch-model-tabs" style={{ marginTop: 10 }}>
-        {MODELS.map((m) => {
-          const qtyInModel = PRODUCTS_BY_MODEL[m.id].reduce((s, p) => s + (manualCart[p.id] || 0), 0);
-          return (
-            <button
-              key={m.id}
-              className={"ch-model-tab" + (m.id === catalogTab ? " ch-model-tab-active" : "")}
-              onClick={() => setCatalogTab(m.id)}
-              style={m.available === false ? { opacity: 0.55 } : undefined}
-            >
-              <span>{m.name}</span>
-              {qtyInModel > 0 && <span className="ch-model-tab-badge">{qtyInModel}</span>}
-            </button>
-          );
-        })}
+      <div className="ch-model-tabs-wrap ch-model-tabs-wrap-always" style={{ marginTop: 10 }}>
+        <button type="button" aria-label="Modelos anteriores" className="ch-model-tabs-arrow ch-model-tabs-arrow-left" onClick={() => scrollModelTabs(-1)}>
+          <ChevronLeft size={16} />
+        </button>
+        <div className="ch-model-tabs" ref={modelTabsRef}>
+          {MODELS.map((m) => {
+            const qtyInModel = PRODUCTS_BY_MODEL[m.id].reduce((s, p) => s + (manualCart[p.id] || 0), 0);
+            return (
+              <button
+                key={m.id}
+                className={"ch-model-tab" + (m.id === catalogTab ? " ch-model-tab-active" : "")}
+                onClick={() => setCatalogTab(m.id)}
+                style={m.available === false ? { opacity: 0.55 } : undefined}
+              >
+                <span>{m.name}</span>
+                {qtyInModel > 0 && <span className="ch-model-tab-badge">{qtyInModel}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" aria-label="Más modelos" className="ch-model-tabs-arrow ch-model-tabs-arrow-right" onClick={() => scrollModelTabs(1)}>
+          <ChevronRight size={16} />
+        </button>
       </div>
 
       <div className="ch-flavor-list">

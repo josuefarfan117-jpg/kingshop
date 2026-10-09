@@ -4,7 +4,7 @@ import {
   Home, ShoppingBag, Gift, Wallet, User, MessageCircle, Users, ChevronRight, ChevronLeft,
   Copy, Check, X, ArrowLeft, Menu, LogOut, TrendingUp, TrendingDown, Star,
   Clock, Package, Sparkles, ChevronDown, ChevronUp, Plus, Minus, Lock, Eye, EyeOff,
-  Banknote, Landmark, CreditCard, MapPin, Tag,
+  Banknote, Landmark, MapPin, Tag,
 } from "lucide-react";
 import {
   registerCustomer, signInCustomer, signOutCustomer,
@@ -79,7 +79,6 @@ function waLink(text) {
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", description: "Pagas al recibir tu pedido.", icon: "cash" },
   { id: "transferencia", label: "Transferencia", description: "Te compartimos los datos bancarios por WhatsApp.", icon: "transfer" },
-  { id: "terminal", label: "Terminal (tarjeta)", description: "Pago con tarjeta al momento de la entrega.", icon: "card" },
 ];
 
 // Recompensas: catálogo de puntos — separado del catálogo de productos.
@@ -935,7 +934,7 @@ function computeDailyStats(customers, orders) {
 const PAYMENT_LABEL = {
   efectivo: "Efectivo",
   transferencia: "Transferencia",
-  terminal: "Terminal",
+  terminal: "Terminal", // ya no se ofrece; se conserva solo para pedidos viejos en reportes
 };
 function paymentLabel(id) {
   if (!id) return "No registrado";
@@ -4120,7 +4119,7 @@ function CatalogView({ activeModelId, onChangeModel, cart, onChangeQty, stockLev
         )}
       </div>
       <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: 8 }}>
-        Envíos a domicilio con costo extra · Tarjeta, efectivo o transferencia · La promo 2x de {model.name} se aplica automáticamente al combinar sus sabores (no se mezcla con otros modelos).
+        Envíos a domicilio con costo extra · Efectivo o transferencia · La promo 2x de {model.name} se aplica automáticamente al combinar sus sabores (no se mezcla con otros modelos).
       </p>
 
       <div className="ch-section-title" style={{ marginTop: 20, marginBottom: 0 }}>Sabores disponibles</div>
@@ -4373,7 +4372,7 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
   function paymentIcon(icon) {
     if (icon === "cash") return <Banknote size={18} />;
     if (icon === "transfer") return <Landmark size={18} />;
-    return <CreditCard size={18} />;
+    return <Banknote size={18} />;
   }
 
   function handleSend(e) {

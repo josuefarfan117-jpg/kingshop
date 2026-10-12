@@ -223,6 +223,14 @@ async function cotizarEnvio(lat, lng) {
 async function saveOrderShipping(pedidoId, shippingCost) {
   if (pedidoId == null || typeof shippingCost !== "number" || !isFinite(shippingCost)) return { ok: true, skipped: true };
   try {
+    // 1) Camino normal (cliente): una función de Supabase (guardar_envio_pedido)
+    //    que solo deja escribir el envío del pedido PENDIENTE del propio cliente.
+    //    Hace falta porque la tabla `pedidos` solo permite escribir al admin.
+    const rpc = await supabase.rpc("guardar_envio_pedido", { p_pedido_id: pedidoId, p_costo: shippingCost });
+    if (!rpc.error && rpc.data === true) return { ok: true };
+    if (rpc.error) console.warn("saveOrderShipping (rpc):", rpc.error.message);
+
+    // 2) Respaldo (por ejemplo, si quien guarda es el admin): escritura directa.
     const { data, error } = await supabase
       .from("pedidos")
       .update({ shipping_cost: shippingCost })
@@ -230,7 +238,7 @@ async function saveOrderShipping(pedidoId, shippingCost) {
       .select("id");
     if (error) { console.warn("saveOrderShipping:", error.message); return { ok: false, error: error.message }; }
     if (!data || data.length === 0) {
-      console.warn("saveOrderShipping: no se actualizó ningún renglón (probable permiso/RLS en pedidos.shipping_cost).");
+      console.warn("saveOrderShipping: no se pudo guardar el envío (falta correr el SQL de guardar_envio_pedido en Supabase).");
       return { ok: false, error: "sin_permiso" };
     }
     return { ok: true };

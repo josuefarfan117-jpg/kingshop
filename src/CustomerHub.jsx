@@ -2668,7 +2668,7 @@ const HALLOWEEN_CSS = `
         --border: #35284B;
         --text: #F2EEF8;
         --text-dim: #ABA2BD;
-        --text-faint: #716885;
+        --text-faint: #9A91AF;
         --gold: #F29A3D;
         --gold-dim: #9C6129;
         --green: #8FCB82;
@@ -2974,6 +2974,13 @@ function GlobalStyle() {
         padding: 12px 14px; border-bottom: 1px solid var(--border);
       }
       .ch-flavor-row:last-child { border-bottom: none; }
+
+      /* Los <button> NO heredan el color de letra por sí solos: el navegador los
+         pinta en negro, que sobre el fondo oscuro no se lee (pasaba en las barras
+         de "Modelos/Sabores más vendidos", entre otras). :where() deja esta regla
+         con la prioridad mínima, así cualquier botón con su propio color (los
+         .ch-btn, los dorados, etc.) sigue exactamente igual. */
+      :where(.ch-root) button { color: inherit; }
 
       .ch-promo-model-card {
         display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px;
@@ -5131,7 +5138,7 @@ function AdminBreakdownRow({ rowKey, label, qty, maxQty, color, buyers, expanded
     <div style={{ marginBottom: 12 }}>
       <button
         onClick={() => onToggle(isOpen ? null : rowKey)}
-        style={{ background: "none", border: "none", padding: 0, width: "100%", textAlign: "left", cursor: "pointer" }}
+        style={{ background: "none", border: "none", padding: 0, width: "100%", textAlign: "left", cursor: "pointer", color: "var(--text)" }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>

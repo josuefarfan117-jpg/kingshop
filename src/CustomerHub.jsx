@@ -190,6 +190,27 @@ function loadGoogleMapsPlaces() {
   return _mapsLoadPromise;
 }
 
+/* ----------------------------------------------------------------------------
+   ENVÍO POR DISTANCIA
+   El cálculo se hace en Supabase (función calcular_envio): aquí solo se manda
+   la latitud/longitud de la dirección del cliente y se recibe el COSTO. El
+   punto de venta y la tarifa viven en una tabla privada, así que no aparecen
+   en el código, ni en pantalla, ni en el mensaje de WhatsApp.
+   status: "ok" (hay costo) | "fuera" (más lejos que la zona máxima) | "error"
+   (no se pudo calcular: el pedido sigue y el envío se cotiza por WhatsApp).
+---------------------------------------------------------------------------- */
+async function cotizarEnvio(lat, lng) {
+  try {
+    const { data, error } = await supabase.rpc("calcular_envio", { p_lat: lat, p_lng: lng });
+    if (error || !data) return { status: "error", costo: null };
+    if (data.ok) return { status: "ok", costo: Number(data.costo) };
+    if (data.motivo === "fuera_de_zona") return { status: "fuera", costo: null };
+    return { status: "error", costo: null };
+  } catch (e) {
+    return { status: "error", costo: null };
+  }
+}
+
 // Dominio real de la página. De aquí cuelga el enlace personal de cada
 // cliente. Se toma del navegador (window.location.origin) para que el
 // enlace siempre apunte a donde de verdad está corriendo la página — sirve
@@ -829,15 +850,23 @@ function buildCartMessage(cartList, pricing, checkout) {
     return `${mb.model.name} (${mb.model.subtitle}):\n${lines.join("\n")}\n  Subtotal: ${formatMoney(mb.total)}${parts.length ? " (" + parts.join(" + ") + ")" : ""}`;
   });
   let message = `Hola, quiero hacer este pedido:\n\n${blocks.join("\n\n")}\n\nSubtotal: ${formatMoney(pricing.total)}`;
+  const envio = checkout && typeof checkout.shippingCost === "number" ? checkout.shippingCost : null;
+  const labelTotal = envio !== null ? "Total de productos" : "Total a pagar";
   if (checkout && checkout.creditUsed > 0) {
     // El mensaje de WhatsApp lleva el desglose para que quien atiende cobre
     // exactamente lo que el cliente vio en pantalla.
     message += `\nCrédito de recompensas aplicado (tope ${Math.round(CREDIT_MAX_PERCENT * 100)}%): -${formatMoney(checkout.creditUsed)}`;
-    message += `\nTotal a pagar: ${formatMoney(checkout.toPay)}`;
+    message += `\n${labelTotal}: ${formatMoney(checkout.toPay)}`;
   } else {
-    message += `\nTotal a pagar: ${formatMoney(pricing.total)}`;
+    message += `\n${labelTotal}: ${formatMoney(pricing.total)}`;
   }
-  message += `\n\n(El costo de envío se cotiza aparte según la zona de entrega.)`;
+  if (envio !== null) {
+    const baseProductos = checkout.creditUsed > 0 ? checkout.toPay : pricing.total;
+    message += `\nEnvío: ${formatMoney(envio)}`;
+    message += `\nTOTAL A PAGAR (con envío): ${formatMoney(baseProductos + envio)}`;
+  } else {
+    message += `\n\n(El costo de envío se cotiza aparte según la zona de entrega.)`;
+  }
   if (checkout) {
     const methodLabel = PAYMENT_METHODS.find((m) => m.id === checkout.paymentMethod)?.label || checkout.paymentMethod;
     message += `\n\nMétodo de pago: ${methodLabel}`;
@@ -1695,6 +1724,7 @@ export default function CustomerHub() {
       paymentMethod: checkout?.paymentMethod || "",
       address: checkout?.address || "",
       reference: checkout?.reference || "",
+      shippingCost: typeof checkout?.shippingCost === "number" ? checkout.shippingCost : null,
     };
     if (currentUser) {
       // CRÉDITO DE TIENDA: se aplica completo (el cliente no elige el monto),
@@ -4342,6 +4372,22 @@ function AddressAutocompleteInput({ value, confirmed, onChangeText, onSelectPlac
 
 function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, creditAvailable = 0, onBack, waLink, buildCartMessage, onConfirm, navigateAfterConfirm }) {
   const [touched, setTouched] = useState(false);
+  // Cotización de envío: se recalcula sola cada vez que el cliente confirma
+  // una dirección de la lista de Google (así ya trae latitud/longitud).
+  const [envio, setEnvio] = useState({ status: "idle", costo: null });
+  useEffect(() => {
+    const lat = checkoutInfo.addressLat;
+    const lng = checkoutInfo.addressLng;
+    if (!checkoutInfo.addressConfirmed || lat == null || lng == null) {
+      setEnvio({ status: "idle", costo: null });
+      return undefined;
+    }
+    let cancelled = false;
+    setEnvio({ status: "loading", costo: null });
+    cotizarEnvio(lat, lng).then((r) => { if (!cancelled) setEnvio(r); });
+    return () => { cancelled = true; };
+  }, [checkoutInfo.addressConfirmed, checkoutInfo.addressLat, checkoutInfo.addressLng]);
+  const shippingCost = envio.status === "ok" ? envio.costo : null;
   if (cartList.length === 0) {
     return (
       <div style={{ paddingTop: 20 }}>
@@ -4359,7 +4405,7 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
   // etc.), no se le bloquea el pedido al cliente por una falla ajena a él —
   // basta con que haya escrito algo.
   const mapsAvailable = typeof window !== "undefined" && !!window.google?.maps?.places;
-  const isValid = !!checkoutInfo.paymentMethod && checkoutInfo.address.trim().length > 0 && (!mapsAvailable || checkoutInfo.addressConfirmed);
+  const isValid = !!checkoutInfo.paymentMethod && checkoutInfo.address.trim().length > 0 && (!mapsAvailable || checkoutInfo.addressConfirmed) && envio.status !== "fuera" && envio.status !== "loading";
   // El crédito se aplica entero hasta donde alcance, pero nunca por encima del
   // 30% del pedido (ver CREDIT_MAX_PERCENT) — es la regla que evita que una
   // compra salga gratis o que la tienda pierda dinero en ella.
@@ -4367,7 +4413,7 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
   const creditUsed = checkoutInfo.useCredit ? creditAppliedFor(pricing.total, creditAvailable) : 0;
   const cappedByRule = checkoutInfo.useCredit && creditAvailable > creditCap;
   const toPay = pricing.total - creditUsed;
-  const message = buildCartMessage(cartList, pricing, { ...checkoutInfo, creditUsed, toPay });
+  const message = buildCartMessage(cartList, pricing, { ...checkoutInfo, creditUsed, toPay, shippingCost });
 
   function paymentIcon(icon) {
     if (icon === "cash") return <Banknote size={18} />;
@@ -4381,7 +4427,7 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
       setTouched(true);
       return;
     }
-    onConfirm(checkoutInfo);
+    onConfirm({ ...checkoutInfo, shippingCost });
     navigateAfterConfirm();
   }
 
@@ -4506,8 +4552,11 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
       >
         <MapPin size={16} color={creditUsed > 0 ? "var(--rust)" : "var(--text-dim)"} style={{ flexShrink: 0, marginTop: 1 }} />
         <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
-          El costo de envío <strong>no está incluido</strong> en este total{creditUsed > 0 ? " ni se cubre con tu crédito" : ""}.
-          Se cotiza por WhatsApp según tu zona al confirmar el pedido.
+          {envio.status === "loading" && "Calculando tu envío…"}
+          {envio.status === "ok" && <>El envío se calcula según tu dirección y se suma al total{creditUsed > 0 ? <>. <strong>No se cubre con tu crédito</strong></> : ""}.</>}
+          {envio.status === "fuera" && <span style={{ color: "var(--rust)" }}>Por ahora tu dirección queda fuera de nuestra zona de entrega. Prueba con otra dirección o escríbenos por WhatsApp.</span>}
+          {envio.status === "idle" && "Elige tu dirección de la lista y aquí verás el costo de tu envío."}
+          {envio.status === "error" && <>No pudimos calcular tu envío en este momento: lo cotizamos contigo por WhatsApp al confirmar. El envío <strong>no está incluido</strong> en este total.</>}
         </div>
       </div>
 
@@ -4516,7 +4565,8 @@ function CheckoutView({ cartList, pricing, checkoutInfo, setCheckoutInfo, credit
         {creditUsed > 0 && (
           <Row label="Crédito de recompensas aplicado" value={"–" + formatMoney(creditUsed)} />
         )}
-        <Row label="Total a pagar" value={formatMoney(toPay)} bold />
+        {shippingCost !== null && <Row label="Envío" value={formatMoney(shippingCost)} />}
+        <Row label="Total a pagar" value={formatMoney(toPay + (shippingCost ?? 0))} bold />
         {creditUsed > 0 && creditAvailable - creditUsed > 0 && (
           <div style={{ fontSize: 11.5, color: "var(--gold)", paddingTop: 6 }}>
             Te quedan {formatMoney(creditAvailable - creditUsed)} de crédito para tu siguiente pedido.
@@ -4550,7 +4600,8 @@ function OrderSuccessView({ order, onDone }) {
         {order.items.map((it, i) => <Row key={i} label={`${it.qty} x ${it.name}`} value="" />)}
         <Row label="Subtotal" value={formatMoney(order.subtotal ?? order.pricing.total)} />
         {order.creditUsed > 0 && <Row label="Crédito de recompensas" value={"–" + formatMoney(order.creditUsed)} />}
-        <Row label="Total a pagar" value={formatMoney(order.total ?? order.pricing.total)} bold />
+        {typeof order.shippingCost === "number" && <Row label="Envío" value={formatMoney(order.shippingCost)} />}
+        <Row label="Total a pagar" value={formatMoney((order.total ?? order.pricing.total) + (typeof order.shippingCost === "number" ? order.shippingCost : 0))} bold />
         {order.pointsEarned !== null && <Row label="Puntos obtenidos" value={"+" + formatPoints(order.pointsEarned)} bold />}
       </div>
 

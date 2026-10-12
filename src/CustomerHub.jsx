@@ -211,6 +211,53 @@ async function cotizarEnvio(lat, lng) {
   }
 }
 
+/* ----------------------------------------------------------------------------
+   ENVÍO GUARDADO EN SUPABASE (columna pedidos.shipping_cost)
+   El costo de envío se calcula al armar el pedido, pero antes solo vivía en la
+   memoria del navegador: al recargar o confirmar se perdía. Ahora se guarda en
+   la columna shipping_cost del pedido y se vuelve a leer cada vez que se cargan
+   los pedidos, para que el reporte (columna REPARTIDOR) y "Mis pedidos" lo
+   muestren siempre. Todo esto es "a prueba de fallas": si algo sale mal solo
+   avisa en consola y el pedido sigue exactamente igual que antes.
+---------------------------------------------------------------------------- */
+async function saveOrderShipping(pedidoId, shippingCost) {
+  if (pedidoId == null || typeof shippingCost !== "number" || !isFinite(shippingCost)) return { ok: true, skipped: true };
+  try {
+    const { data, error } = await supabase
+      .from("pedidos")
+      .update({ shipping_cost: shippingCost })
+      .eq("id", pedidoId)
+      .select("id");
+    if (error) { console.warn("saveOrderShipping:", error.message); return { ok: false, error: error.message }; }
+    if (!data || data.length === 0) {
+      console.warn("saveOrderShipping: no se actualizó ningún renglón (probable permiso/RLS en pedidos.shipping_cost).");
+      return { ok: false, error: "sin_permiso" };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn("saveOrderShipping:", e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+async function attachShippingCosts(orders) {
+  try {
+    const ids = [...new Set((orders || []).map((o) => o.dbOrderId).filter((id) => id != null))];
+    if (ids.length === 0) return orders;
+    const costById = {};
+    for (let i = 0; i < ids.length; i += 150) {
+      const { data, error } = await supabase.from("pedidos").select("id, shipping_cost").in("id", ids.slice(i, i + 150));
+      if (error) { console.warn("attachShippingCosts:", error.message); return orders; }
+      for (const row of data || []) {
+        if (row.shipping_cost !== null && row.shipping_cost !== undefined) costById[row.id] = Number(row.shipping_cost);
+      }
+    }
+    return orders.map((o) => (o.dbOrderId != null && typeof costById[o.dbOrderId] === "number" ? { ...o, shippingCost: costById[o.dbOrderId] } : o));
+  } catch (e) {
+    console.warn("attachShippingCosts:", e);
+    return orders;
+  }
+}
+
 // Dominio real de la página. De aquí cuelga el enlace personal de cada
 // cliente. Se toma del navegador (window.location.origin) para que el
 // enlace siempre apunte a donde de verdad está corriendo la página — sirve
@@ -539,22 +586,33 @@ export let MODELS = [
    `null` = todavía no se define el costo; en el reporte sale como "—" y esa
    línea no suma ganancia (para no inventar un número que no es real).
 ---------------------------------------------------------------------------- */
+// La llave es NOMBRE + PUFFS del modelo, sin espacios ni símbolos (ej.
+// "iplayxbox4000"). Se hace así porque el catálogo real viene de Supabase y ahí
+// los ids son m_<número>, no los nombres fijos de este archivo; el nombre y los
+// puffs sí son los mismos en los dos lados.
 const MODEL_COST = {
-  m_wakasopro15k: 170,        // Waka So Pro 15,000
-  m_wakaburst36k: 225,        // Waka Burst 36,000
-  m_geekbarpulsex25k: 220,    // Geek Bar Pulse X 25,000
-  m_geekbarclear50k: 240,     // Geek Bar Clear 50,000
-  m_geekbarmini1500: 100,     // Geek Bar Mini 1,500
-  m_geekbarpulse15k: 165,     // Geek Bar Pulse 15,000 — tomado de OFIII.xlsx (código "GEE15", hoja 22-sep)
-  m_iplaybigmax: 165,         // iPlay Big Max 5,000
-  m_iplayxbox: 145,           // iPlay X Box 4,000
-  m_iplayxboxpro15k: 195,     // iPlay X Box Pro 15,000
-  m_iplayxboxpromax50k: 240,  // iPlay X Box Pro Max 50,000
-  m_iplayburst45k: 215,       // iPlay Burst 45,000
-  m_iplaymax2500: 105,        // iPlay Max 2,500 — tomado de OFIII.xlsx (código "IPLAY2500", hoja 07-sep)
+  wakasopro15000: 170,        // Waka So Pro 15,000        (tabla: WAKA 15)
+  wakaburst36000: 225,        // Waka Burst 36,000         (tabla: WAKA36)
+  geekbarpulsex25000: 220,    // Geek Bar Pulse X 25,000   (tabla: GEEK25)
+  geekbarclear50000: 240,     // Geek Bar Clear 50,000     (tabla: GEEK50)
+  geekbarmini1500: 100,       // Geek Bar Mini 1,500       (tabla: MINI)
+  geekbarpulse15000: 165,     // Geek Bar Pulse 15,000     (tabla: GEE15)
+  iplaybigmax5000: 165,       // iPlay Big Max 5,000       (tabla: Iplay 5k)
+  iplayxbox4000: 145,         // iPlay X Box 4,000         (tabla: IPLABOX)
+  iplayxboxpro15000: 195,     // iPlay X Box Pro 15,000    (tabla: IPLAYBOXP)
+  iplayxboxpromax50000: 240,  // iPlay X Box Pro Max 50,000 (tabla: Iplay 50)
+  iplayburst45000: 215,       // iPlay Burst 45,000        (tabla: IPLAY45)
+  iplaymax2500: 105,          // iPlay Max 2,500 — de OFIII.xlsx (no venía en la tabla)
 };
+function modelCostKey(model) {
+  if (!model) return null;
+  const name = String(model.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const puffs = String(model.subtitle || "").replace(/\D/g, "");
+  return name + puffs;
+}
 function modelCost(modelId) {
-  const c = MODEL_COST[modelId];
+  const model = MODELS.find((m) => m.id === modelId);
+  const c = MODEL_COST[modelCostKey(model)];
   return typeof c === "number" ? c : null;
 }
 
@@ -981,19 +1039,22 @@ function paymentShort(id) {
 // Nombre corto de cada modelo para la celda PRODUCTO del reporte. Si agregas
 // un modelo nuevo y no está aquí, sale con su nombre completo en mayúsculas.
 const MODEL_SHORT_NAME = {
-  m_iplayxbox: "IPLAY BOX",
-  m_iplayxboxpro15k: "IPLAY BOX PRO 15",
-  m_iplayxboxpromax50k: "IPLAY 50",
-  m_iplayburst45k: "IPLAY 45",
-  m_iplaybigmax: "IPLAY 5K",
-  m_iplaymax2500: "IPLAY MAX",
-  m_wakasopro15k: "WAK 15",
-  m_wakaburst36k: "WAK 36",
-  m_geekbarpulse15k: "GEEK 15",
-  m_geekbarpulsex25k: "GEEK 25",
-  m_geekbarclear50k: "GEEK 50",
-  m_geekbarmini1500: "MINI",
+  iplayxbox4000: "IPLAY BOX",
+  iplayxboxpro15000: "IPLAY BOX PRO 15",
+  iplayxboxpromax50000: "IPLAY 50",
+  iplayburst45000: "IPLAY 45",
+  iplaybigmax5000: "IPLAY 5K",
+  iplaymax2500: "IPLAY MAX",
+  wakasopro15000: "WAK 15",
+  wakaburst36000: "WAK 36",
+  geekbarpulse15000: "GEEK 15",
+  geekbarpulsex25000: "GEEK 25",
+  geekbarclear50000: "GEEK 50",
+  geekbarmini1500: "MINI",
 };
+function modelShortKey(model, fallbackId) {
+  return model ? modelCostKey(model) : fallbackId;
+}
 
 // Texto de la celda PRODUCTO. Un solo modelo: "2 WAK 15" (sin número si es 1).
 // Varios modelos en el mismo pedido: "1 IPLAY BOX + 2 GEEK 25", todo en la misma
@@ -1001,11 +1062,12 @@ const MODEL_SHORT_NAME = {
 function productCellText(order) {
   const groups = [];
   for (const it of order.items || []) {
-    const key = it.modelId || it.name;
+    const mid = resolveItemModelId(it);
+    const key = mid || it.name;
     let g = groups.find((x) => x.key === key);
     if (!g) {
-      const model = MODELS.find((m) => m.id === it.modelId);
-      const label = MODEL_SHORT_NAME[it.modelId]
+      const model = MODELS.find((m) => m.id === mid);
+      const label = MODEL_SHORT_NAME[modelShortKey(model, mid)]
         || (model ? `${model.name} ${model.subtitle}`.toUpperCase() : String(it.name || "").toUpperCase());
       g = { key, label, qty: 0 };
       groups.push(g);
@@ -1054,8 +1116,9 @@ function orderLines(order) {
       ? Math.round((base ?? gross) - assigned)
       : Math.round(raw);
     assigned += charged;
-    const model = MODELS.find((m) => m.id === it.modelId);
-    const unitCost = modelCost(it.modelId);
+    const mid = resolveItemModelId(it);
+    const model = MODELS.find((m) => m.id === mid);
+    const unitCost = modelCost(mid);
     const invest = unitCost === null ? null : unitCost * it.qty;
     return {
       product: model ? `${model.name} ${model.subtitle} — ${it.name}` : it.name,
@@ -1063,7 +1126,7 @@ function orderLines(order) {
       charged,
       invest,
       profit: invest === null ? null : charged - invest,
-      modelId: it.modelId,
+      modelId: mid,
       modelName: model ? `${model.name} ${model.subtitle}` : "Otro",
     };
   });
@@ -1586,6 +1649,7 @@ export default function CustomerHub() {
     if (!silent) setOrdersLoading(false);
     refreshingRef.current = false;
     if (result.error) { console.warn("refreshOrdersFromSupabase:", result.error); return result; }
+    result.orders = await attachShippingCosts(result.orders); // trae pedidos.shipping_cost
 
     // Aviso de pedidos nuevos: compara contra lo ya visto. La primera lectura
     // solo memoriza (no suena por pedidos que ya estaban ahí).
@@ -1694,10 +1758,11 @@ export default function CustomerHub() {
   async function refreshMyOrders(customerId) {
     const result = await loadMyOrders();
     if (result.error) { console.warn("refreshMyOrders:", result.error); return; }
+    const myOrders = await attachShippingCosts(result.orders); // trae pedidos.shipping_cost
     setOrders((prev) => {
-      const dbIds = new Set(result.orders.map((o) => o.dbOrderId));
+      const dbIds = new Set(myOrders.map((o) => o.dbOrderId));
       const localOnly = (prev[customerId] || []).filter((o) => o.dbOrderId == null ? !o.synced : !dbIds.has(o.dbOrderId));
-      return { ...prev, [customerId]: [...result.orders, ...localOnly] };
+      return { ...prev, [customerId]: [...myOrders, ...localOnly] };
     });
   }
 
@@ -1896,6 +1961,9 @@ export default function CustomerHub() {
       });
       if (result.error) return fail(result.error);
 
+      // Guarda el costo de envío en el pedido (no bloquea ni cancela nada si falla).
+      await saveOrderShipping(result.pedidoId, delivery.shippingCost);
+
       setOrderSyncState(customer.id, localOrderId, { dbOrderId: result.pedidoId, syncError: null, synced: true });
       refreshMyOrders(customer.id); // trae el id real y deja el historial igual al de Supabase
       refreshMyAccount(customer.id); // crédito apartado real
@@ -1913,7 +1981,7 @@ export default function CustomerHub() {
     savePendingOrderToSupabase(currentUser, order.id, {
       items: order.items, subtotal: order.subtotal, creditUsed: order.creditUsed || 0,
       total: order.total, pointsEarned: order.pointsEarned,
-      delivery: { paymentMethod: order.paymentMethod, address: order.address, reference: order.reference },
+      delivery: { paymentMethod: order.paymentMethod, address: order.address, reference: order.reference, shippingCost: order.shippingCost },
     });
   }
 

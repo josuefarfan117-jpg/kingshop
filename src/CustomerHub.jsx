@@ -950,13 +950,14 @@ function computeDailyStats(customers, orders) {
 /* ----------------------------------------------------------------------------
    REPORTE DE VENTAS EN EXCEL — UNO SOLO, DE TODO EL PERIODO
    No se genera un archivo por venta: se juntan TODOS los pedidos confirmados
-   del rango elegido (hoy, últimos 7 días, mes o histórico) en una sola hoja
-   con el formato fijo:
+   del rango elegido (hoy, 7 días, mes, histórico o fechas personalizadas) en
+   una sola hoja con el formato fijo del negocio:
 
-     Pedido | Producto | Cant. | Precio | Método de pago | Inversión | Ganancia
+     PEDIDO | PRODUCTO | PRECIO | REPARTIDOR | MÉTODO DE PAGO | INVERSIONES | GANANCIA | CLIENTE
 
-   Un renglón por producto. El número de pedido (Pedido 1, Pedido 2, …) solo
-   aparece en el primer renglón de cada pedido, así se lee agrupado.
+   UN renglón por PEDIDO (aunque traiga varios modelos: todos van juntos en la
+   celda PRODUCTO, ej. "1 IPLAY BOX + 2 GEEK 25"). Ganancia = Precio − Inversión
+   (el repartidor se suma aparte en el total cobrado, no entra en la ganancia).
    Requiere la librería "xlsx" (SheetJS): npm install xlsx
 ---------------------------------------------------------------------------- */
 
@@ -968,6 +969,70 @@ const PAYMENT_LABEL = {
 function paymentLabel(id) {
   if (!id) return "No registrado";
   return PAYMENT_LABEL[id] || id;
+}
+
+// Cómo se escribe cada método de pago en la hoja de ventas (igual que el Excel).
+const PAYMENT_SHORT = { efectivo: "EFE", transferencia: "TRANSFER", terminal: "TERMINAL" };
+function paymentShort(id) {
+  if (!id) return "";
+  return PAYMENT_SHORT[id] || String(id).toUpperCase();
+}
+
+// Nombre corto de cada modelo para la celda PRODUCTO del reporte. Si agregas
+// un modelo nuevo y no está aquí, sale con su nombre completo en mayúsculas.
+const MODEL_SHORT_NAME = {
+  m_iplayxbox: "IPLAY BOX",
+  m_iplayxboxpro15k: "IPLAY BOX PRO 15",
+  m_iplayxboxpromax50k: "IPLAY 50",
+  m_iplayburst45k: "IPLAY 45",
+  m_iplaybigmax: "IPLAY 5K",
+  m_iplaymax2500: "IPLAY MAX",
+  m_wakasopro15k: "WAK 15",
+  m_wakaburst36k: "WAK 36",
+  m_geekbarpulse15k: "GEEK 15",
+  m_geekbarpulsex25k: "GEEK 25",
+  m_geekbarclear50k: "GEEK 50",
+  m_geekbarmini1500: "MINI",
+};
+
+// Texto de la celda PRODUCTO. Un solo modelo: "2 WAK 15" (sin número si es 1).
+// Varios modelos en el mismo pedido: "1 IPLAY BOX + 2 GEEK 25", todo en la misma
+// celda para que siga contando como UN pedido. Los sabores se suman por modelo.
+function productCellText(order) {
+  const groups = [];
+  for (const it of order.items || []) {
+    const key = it.modelId || it.name;
+    let g = groups.find((x) => x.key === key);
+    if (!g) {
+      const model = MODELS.find((m) => m.id === it.modelId);
+      const label = MODEL_SHORT_NAME[it.modelId]
+        || (model ? `${model.name} ${model.subtitle}`.toUpperCase() : String(it.name || "").toUpperCase());
+      g = { key, label, qty: 0 };
+      groups.push(g);
+    }
+    g.qty += it.qty;
+  }
+  if (groups.length === 0) return "";
+  if (groups.length === 1) return groups[0].qty > 1 ? `${groups[0].qty} ${groups[0].label}` : groups[0].label;
+  return groups.map((g) => `${g.qty} ${g.label}`).join(" + ");
+}
+
+// Un renglón del reporte = un pedido completo.
+function reportRowForOrder(order, lines) {
+  const productLines = lines.filter((l) => !l.isCredit);
+  // El crédito de recompensas ya viene como renglón negativo: Precio = lo que
+  // de verdad entró por los productos.
+  const precio = lines.reduce((sum, l) => sum + l.charged, 0);
+  const missingCost = productLines.some((l) => l.invest === null);
+  const inversion = missingCost ? null : productLines.reduce((sum, l) => sum + l.invest, 0);
+  return {
+    producto: productCellText(order),
+    precio,
+    repartidor: typeof order.shippingCost === "number" ? order.shippingCost : null,
+    metodo: paymentShort(order.paymentMethod),
+    inversion,
+    ganancia: inversion === null ? null : precio - inversion,
+  };
 }
 
 // El total del pedido puede traer promo 2x, así que no siempre es la suma de
@@ -1031,7 +1096,7 @@ function buildSalesReport(customers, orders, { from, to } = {}) {
         isCredit: true,
       });
     }
-    return { label: `Pedido ${i + 1}`, order: o, customer: customerById(o.customerId), lines };
+    return { label: `Pedido ${i + 1}`, order: o, customer: customerById(o.customerId), lines, row: reportRowForOrder(o, lines) };
   });
 
   const totals = report.reduce(
@@ -1055,52 +1120,74 @@ function exportSalesReport(customers, orders, { from, to, rangeLabel } = {}) {
   const { report, totals } = buildSalesReport(customers, orders, { from, to });
   const generated = new Date();
 
-  const head = [
-    ["THE KING SHOP — REPORTE DE VENTAS"],
-    ["Periodo", rangeLabel || "Histórico completo"],
-    ["Generado", generated.toLocaleString("es-MX")],
-    [],
-    ["Pedido", "Producto", "Cant.", "Precio", "Método de pago", "Inversión", "Ganancia"],
-  ];
+  // ---- Hoja principal: formato fijo del negocio, un renglón por PEDIDO ----
+  const HEADERS = ["PEDIDO", "PRODUCTO", "PRECIO", "REPARTIDOR", "MÉTODO DE PAGO", "INVERSIONES", "GANANCIA", "CLIENTE"];
+  const sumOf = (arr) => arr.reduce((acc, v) => acc + (typeof v === "number" ? v : 0), 0);
+  const tPrecio = sumOf(report.map((r) => r.row.precio));
+  const tRepartidor = sumOf(report.map((r) => r.row.repartidor));
+  const tInversion = sumOf(report.map((r) => r.row.inversion));
+  const tGanancia = sumOf(report.map((r) => r.row.ganancia));
+  const anyMissingCost = report.some((r) => r.row.inversion === null);
 
-  const body = [];
-  for (const r of report) {
-    r.lines.forEach((l, idx) => {
-      body.push([
-        idx === 0 ? r.label : "",
-        l.product,
-        l.qty,
-        l.charged,
-        idx === 0 ? paymentLabel(r.order.paymentMethod) : "",
-        l.invest === null ? "—" : l.invest,
-        l.profit === null ? "—" : l.profit,
-      ]);
-    });
+  const aoa = [
+    HEADERS,
+    ...report.map((r) => [
+      r.label.toUpperCase(),
+      r.row.producto,
+      r.row.precio,
+      r.row.repartidor === null ? "" : r.row.repartidor,
+      r.row.metodo,
+      r.row.inversion === null ? "—" : r.row.inversion,
+      r.row.ganancia === null ? "—" : r.row.ganancia,
+      r.customer?.name || "", // nombre del cliente, alineado con su pedido
+    ]),
+    ["", "", tPrecio, tRepartidor, "", tInversion, tGanancia, ""], // totales de cada columna
+    ["", "", tPrecio + tRepartidor],                            // total cobrado: productos + repartidor
+  ];
+  if (anyMissingCost) {
+    aoa.push([]);
+    aoa.push(["NOTA", "Hay modelos sin inversión capturada (—). No suman en INVERSIONES ni en GANANCIA."]);
   }
 
-  const foot = [
-    [],
-    ["TOTALES", "", totals.units, totals.revenue, "", totals.invest, totals.profit],
-  ];
-  if (totals.missingCost) {
-    foot.push([]);
-    foot.push(["Nota", "Hay modelos sin inversión capturada (marcados con “—”). No suman en Inversión ni en Ganancia."]);
-  }
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  sheet["!cols"] = [{ wch: 12 }, { wch: 40 }, { wch: 11 }, { wch: 13 }, { wch: 17 }, { wch: 14 }, { wch: 13 }, { wch: 26 }];
+  sheet["!rows"] = [{ hpt: 34 }];
 
-  const sheet = XLSX.utils.aoa_to_sheet([...head, ...body, ...foot]);
-  sheet["!cols"] = [
-    { wch: 11 }, { wch: 40 }, { wch: 6 }, { wch: 12 },
-    { wch: 16 }, { wch: 12 }, { wch: 12 },
-  ];
-  sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
-  // Formato de moneda en las columnas de dinero (D, F, G).
-  const firstDataRow = head.length; // 0-indexed: el renglón siguiente al encabezado
-  const lastRow = head.length + body.length + foot.length;
-  for (let r = firstDataRow; r <= lastRow; r++) {
-    for (const c of [3, 5, 6]) {
+  // Colores del Excel original (encabezado verde, columna de pedido amarilla,
+  // renglones en azul claro alternado). Los estilos de celda solo se escriben
+  // con "xlsx-js-style" (misma librería, con estilos); con "xlsx" a secas el
+  // archivo sale igual de ordenado pero sin colores.
+  const thin = { style: "thin", color: { rgb: "8EA9DB" } };
+  const border = { top: thin, bottom: thin, left: thin, right: thin };
+  const nOrders = report.length;
+  for (let r = 0; r < Math.min(aoa.length, nOrders + 3); r++) {
+    for (let c = 0; c < 8; c++) {
       const ref = XLSX.utils.encode_cell({ r, c });
+      if (!sheet[ref]) sheet[ref] = { t: "s", v: "" };
       const cell = sheet[ref];
-      if (cell && typeof cell.v === "number") cell.z = '"$"#,##0';
+      const isNum = c === 2 || c === 3 || c === 5 || c === 6;
+      if (r === 0) {
+        cell.s = {
+          fill: { patternType: "solid", fgColor: { rgb: "70AD47" } },
+          font: { bold: true, sz: 12, color: { rgb: "FFFFFF" } },
+          alignment: { horizontal: "center", vertical: "center", wrapText: true },
+          border,
+        };
+      } else if (r <= nOrders) {
+        cell.s = {
+          fill: { patternType: "solid", fgColor: { rgb: c === 0 ? "FFFF00" : r % 2 === 1 ? "D9E1F2" : "FFFFFF" } },
+          font: { sz: 11 },
+          alignment: { horizontal: isNum ? "right" : "left", vertical: "center" },
+          border,
+        };
+      } else {
+        cell.s = {
+          fill: { patternType: "solid", fgColor: { rgb: "D9E1F2" } },
+          font: { bold: true, sz: 11 },
+          alignment: { horizontal: isNum ? "right" : "left", vertical: "center" },
+          border,
+        };
+      }
     }
   }
 
@@ -1128,6 +1215,8 @@ function exportSalesReport(customers, orders, { from, to, rangeLabel } = {}) {
     ["Pedidos", report.length],
     ["Piezas vendidas", totals.units],
     ["Venta total (lo que entró)", totals.revenue],
+    ["Repartidor (envíos cobrados)", tRepartidor],
+    ["Total cobrado (productos + repartidor)", totals.revenue + tRepartidor],
     ["Crédito de recompensas aplicado", totals.credit],
     ["Inversión total", totals.invest],
     ["Ganancia total", totals.profit],
@@ -5272,26 +5361,39 @@ function SalesReportPanel({ customers, orders, dailyStats }) {
   };
   const monthStart = todayStr.slice(0, 8) + "01";
 
+  // Periodo personalizado: el admin elige "Desde" y "Hasta" en el calendario.
+  const [customFrom, setCustomFrom] = useState(todayStr);
+  const [customTo, setCustomTo] = useState(todayStr);
+  const customValid = !!customFrom && !!customTo && customFrom <= customTo;
+  const fullDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" });
+  const customLabel = !customValid ? "Periodo personalizado"
+    : customFrom === customTo ? fullDate(customFrom) : `${fullDate(customFrom)} al ${fullDate(customTo)}`;
+
   const RANGES = [
     { id: "today", label: "Hoy", from: todayStr, to: todayStr, rangeLabel: `Hoy — ${formatDate(todayStr)}` },
     { id: "week", label: "Últimos 7 días", from: daysAgo(6), to: todayStr, rangeLabel: `${formatDate(daysAgo(6))} al ${formatDate(todayStr)}` },
     { id: "month", label: "Este mes", from: monthStart, to: todayStr, rangeLabel: `${formatDate(monthStart)} al ${formatDate(todayStr)}` },
     { id: "all", label: "Todo el historial", from: null, to: null, rangeLabel: "Histórico completo" },
+    { id: "custom", label: "Personalizado", from: customFrom, to: customTo, rangeLabel: customLabel },
   ];
   const [rangeId, setRangeId] = useState("today");
   const range = RANGES.find((r) => r.id === rangeId);
 
+  // Con fechas incompletas o al revés no se calcula nada (y menos "todo el historial").
+  const rangeInvalid = rangeId === "custom" && !customValid;
   const preview = useMemo(
-    () => buildSalesReport(customers, orders, { from: range.from, to: range.to }),
-    [customers, orders, range.from, range.to]
+    () => rangeInvalid
+      ? { report: [], totals: { units: 0, revenue: 0, credit: 0, invest: 0, profit: 0, missingCost: false }, count: 0 }
+      : buildSalesReport(customers, orders, { from: range.from, to: range.to }),
+    [customers, orders, range.from, range.to, rangeInvalid]
   );
 
   return (
     <>
       <div className="ch-section-title" style={{ marginTop: 22 }}>Reporte de ventas</div>
       <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -6, marginBottom: 8 }}>
-        Elige el periodo y descarga un solo archivo con todos los pedidos: producto, precio,
-        método de pago, inversión y ganancia.
+        Elige el periodo (o pon fechas exactas en “Personalizado”) y descarga un solo archivo con
+        un renglón por pedido: producto, precio, repartidor, método de pago, inversión y ganancia.
       </p>
       <div className="ch-card">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
@@ -5312,6 +5414,29 @@ function SalesReportPanel({ customers, orders, dailyStats }) {
           ))}
         </div>
 
+        {rangeId === "custom" && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            <label style={{ flex: 1, minWidth: 130, fontSize: 12, color: "var(--text-dim)" }}>
+              Desde
+              <input
+                type="date" className="ch-input" value={customFrom}
+                max={customTo || undefined}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                style={{ marginTop: 4, colorScheme: "dark" }}
+              />
+            </label>
+            <label style={{ flex: 1, minWidth: 130, fontSize: 12, color: "var(--text-dim)" }}>
+              Hasta
+              <input
+                type="date" className="ch-input" value={customTo}
+                min={customFrom || undefined}
+                onChange={(e) => setCustomTo(e.target.value)}
+                style={{ marginTop: 4, colorScheme: "dark" }}
+              />
+            </label>
+          </div>
+        )}
+
         <Row label="Pedidos en el periodo" value={preview.count} />
         <Row label="Piezas" value={preview.totals.units} />
         <Row label="Venta total" value={formatMoney(preview.totals.revenue)} />
@@ -5330,12 +5455,17 @@ function SalesReportPanel({ customers, orders, dailyStats }) {
         <button
           className="ch-btn ch-btn-primary ch-btn-block"
           style={{ marginTop: 14 }}
-          disabled={preview.count === 0}
+          disabled={preview.count === 0 || rangeInvalid}
           onClick={() => exportSalesReport(customers, orders, { from: range.from, to: range.to, rangeLabel: range.rangeLabel })}
         >
           Descargar reporte en Excel
         </button>
-        {preview.count === 0 && (
+        {rangeInvalid && (
+          <div style={{ fontSize: 11.5, color: "var(--rust)", marginTop: 8, textAlign: "center" }}>
+            Elige las dos fechas: “Desde” no puede ser después de “Hasta”.
+          </div>
+        )}
+        {!rangeInvalid && preview.count === 0 && (
           <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8, textAlign: "center" }}>
             No hay ventas confirmadas en este periodo.
           </div>

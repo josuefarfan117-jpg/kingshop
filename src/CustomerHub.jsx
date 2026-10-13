@@ -213,7 +213,7 @@ async function cotizarEnvio(lat, lng) {
 
 /* ----------------------------------------------------------------------------
    FECHAS EN HORA DE MÉXICO
-   Antes se usaba localDateStr(), que da la fecha en UTC.
+   Antes se usaba new Date().toISOString().slice(0, 10), que da la fecha en UTC.
    México (Jalisco) va 6 horas atrás de UTC, así que desde las 6:00 pm el "día"
    ya cambiaba al siguiente y las ventas de la tarde-noche caían en el día 13.
    Estas funciones sacan siempre la fecha con la hora de México.
@@ -5266,6 +5266,20 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
                 <span style={{ color: "var(--text-dim)" }}>{order.creditUsed > 0 ? "Cobrar al cliente" : "Total"}</span>
                 <span className="ch-serif" style={{ color: "var(--gold)" }}>{formatMoney(order.total)}</span>
               </div>
+              {typeof order.shippingCost === "number" ? (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 6 }}>
+                    <span style={{ color: "var(--text-dim)" }}>Envío (repartidor)</span>
+                    <span>{formatMoney(order.shippingCost)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 6 }}>
+                    <span style={{ color: "var(--text-dim)" }}>Total con envío</span>
+                    <span className="ch-serif" style={{ color: "var(--gold)" }}>{formatMoney(order.total + order.shippingCost)}</span>
+                  </div>
+                </>
+              ) : order.origin !== "whatsapp" ? (
+                <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 6 }}>Envío: sin registrar</div>
+              ) : null}
             </div>
             {confirmError?.orderId === order.id && (
               <div style={{ color: "var(--rust)", fontSize: 12, marginTop: 8 }}>{confirmError.text}</div>
@@ -5328,7 +5342,7 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
               <span style={{ color: statusColor(o.status), fontWeight: 600 }}>{o.status}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--text-faint)", marginTop: 2 }}>
-              <span>{formatDate(o.date)}{o.orderTime ? ` · ${formatTime(o.orderTime)}` : ""} · {o.origin === "whatsapp" ? "WhatsApp" : "Página"} · {(o.items || []).reduce((s, i) => s + i.qty, 0)} pzs</span>
+              <span>{formatDate(o.date)}{o.orderTime ? ` · ${formatTime(o.orderTime)}` : ""} · {o.origin === "whatsapp" ? "WhatsApp" : "Página"} · {(o.items || []).reduce((s, i) => s + i.qty, 0)} pzs{typeof o.shippingCost === "number" ? ` · Envío ${formatMoney(o.shippingCost)}` : ""}</span>
               <span>{formatMoney(o.total)}</span>
             </div>
           </div>

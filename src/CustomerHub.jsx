@@ -212,6 +212,25 @@ async function cotizarEnvio(lat, lng) {
 }
 
 /* ----------------------------------------------------------------------------
+   FECHAS EN HORA DE MÉXICO
+   Antes se usaba localDateStr(), que da la fecha en UTC.
+   México (Jalisco) va 6 horas atrás de UTC, así que desde las 6:00 pm el "día"
+   ya cambiaba al siguiente y las ventas de la tarde-noche caían en el día 13.
+   Estas funciones sacan siempre la fecha con la hora de México.
+---------------------------------------------------------------------------- */
+const BUSINESS_TZ = "America/Mexico_City";
+function localDateStr(input) {
+  const d = input instanceof Date ? input : input ? new Date(input) : new Date();
+  if (isNaN(d.getTime())) return null;
+  // "en-CA" devuelve el formato AAAA-MM-DD
+  return d.toLocaleDateString("en-CA", { timeZone: BUSINESS_TZ });
+}
+function utcDateStr(input) {
+  const d = new Date(input);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/* ----------------------------------------------------------------------------
    ENVÍO GUARDADO EN SUPABASE (columna pedidos.shipping_cost)
    El costo de envío se calcula al armar el pedido, pero antes solo vivía en la
    memoria del navegador: al recargar o confirmar se perdía. Ahora se guarda en
@@ -252,14 +271,28 @@ async function attachShippingCosts(orders) {
     const ids = [...new Set((orders || []).map((o) => o.dbOrderId).filter((id) => id != null))];
     if (ids.length === 0) return orders;
     const costById = {};
+    const rowById = {};
     for (let i = 0; i < ids.length; i += 150) {
-      const { data, error } = await supabase.from("pedidos").select("id, shipping_cost").in("id", ids.slice(i, i + 150));
+      const { data, error } = await supabase.from("pedidos").select("id, shipping_cost, created_at, confirmed_at").in("id", ids.slice(i, i + 150));
       if (error) { console.warn("attachShippingCosts:", error.message); return orders; }
       for (const row of data || []) {
         if (row.shipping_cost !== null && row.shipping_cost !== undefined) costById[row.id] = Number(row.shipping_cost);
+        rowById[row.id] = row;
       }
     }
-    return orders.map((o) => (o.dbOrderId != null && typeof costById[o.dbOrderId] === "number" ? { ...o, shippingCost: costById[o.dbOrderId] } : o));
+    return orders.map((o) => {
+      let next = o;
+      if (o.dbOrderId != null && typeof costById[o.dbOrderId] === "number") next = { ...next, shippingCost: costById[o.dbOrderId] };
+      // Corrige la fecha: si la que traía el pedido era la fecha UTC de su
+      // created_at / confirmed_at, la cambia por la fecha en hora de México.
+      const row = o.dbOrderId != null ? rowById[o.dbOrderId] : null;
+      if (row && o.date) {
+        for (const ts of [row.confirmed_at, row.created_at]) {
+          if (ts && utcDateStr(ts) === o.date) { const fixed = localDateStr(ts); if (fixed) next = { ...next, date: fixed }; break; }
+        }
+      }
+      return next;
+    });
   } catch (e) {
     console.warn("attachShippingCosts:", e);
     return orders;
@@ -1307,7 +1340,7 @@ function exportSalesReport(customers, orders, { from, to, rangeLabel } = {}) {
   XLSX.utils.book_append_sheet(wb, sheet, "Ventas");
   XLSX.utils.book_append_sheet(wb, summary, "Resumen");
 
-  const stamp = to && from === to ? from : `${from || "inicio"}_a_${to || generated.toISOString().slice(0, 10)}`;
+  const stamp = to && from === to ? from : `${from || "inicio"}_a_${to || localDateStr(generated)}`;
   XLSX.writeFile(wb, `reporte-ventas-${stamp}.xlsx`);
   return report.length;
 }
@@ -1881,7 +1914,7 @@ export default function CustomerHub() {
     if (cartList.length === 0) return;
     if (!currentUser) { requireAuth("checkout"); return; }
     const pricing = computeCartPricing(cartList);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateStr();
     const delivery = {
       paymentMethod: checkout?.paymentMethod || "",
       address: checkout?.address || "",
@@ -2011,7 +2044,7 @@ export default function CustomerHub() {
           ...r,
           creditRemaining: remaining,
           status: remaining === 0 ? "USADA" : "DISPONIBLE",
-          usedOn: [...(r.usedOn || []), { orderId, amount: take, date: new Date().toISOString().slice(0, 10) }],
+          usedOn: [...(r.usedOn || []), { orderId, amount: take, date: localDateStr() }],
         };
       });
       return { ...all, [customerId]: list };
@@ -2133,7 +2166,7 @@ export default function CustomerHub() {
     if (saleResult.error) return { ok: false, error: saleResult.error };
     window.clearTimeout(orderEditTimers.current[orderId]);
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateStr();
 
     // Descuenta stock real por sabor específico, sin bajar de 0 (reflejo en
     // pantalla del mismo descuento que recordSale ya guardó en Supabase).
@@ -2193,7 +2226,7 @@ export default function CustomerHub() {
     if (!cartList || cartList.length === 0) return { ok: false, error: "Agrega al menos un producto." };
 
     const pricing = computeCartPricing(cartList);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateStr();
     const pointsEarned = Math.round(pricing.total * POINTS_PER_PURCHASE_RATE);
     const items = cartList.map((i) => ({ productId: i.product.id, name: i.product.name, qty: i.qty, modelId: i.product.modelId, price: i.product.price, dbId: i.product.dbId ?? null }));
     const orderId = "o_wa_" + Date.now();
@@ -4107,7 +4140,7 @@ function RedeemModal({ reward, balance, step, code, onCancel, onConfirm, onClose
             <div className="ch-card" style={{ textAlign: "left", marginBottom: 16 }}>
               <Row label="Recompensa" value={reward.name} />
               {typeof reward.creditValue !== "number" && <Row label="Código" value={code} bold />}
-              <Row label="Fecha" value={formatDate(new Date().toISOString().slice(0, 10))} />
+              <Row label="Fecha" value={formatDate(localDateStr())} />
               <Row
                 label="Estado"
                 value={typeof reward.creditValue === "number" ? "Saldo disponible en tu cuenta" : "Pendiente de entrega"}
@@ -5349,7 +5382,7 @@ function SalesChart({ dailyStats }) {
   // Los últimos 14 días con venta, del más viejo al más nuevo.
   const data = useMemo(() => [...dailyStats].slice(0, 14).reverse(), [dailyStats]);
   const max = Math.max(1, ...data.map(active.get));
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateStr();
 
   const W = 320, H = 132, padB = 18, padT = 10;
   const slot = data.length ? W / data.length : W;
@@ -5429,11 +5462,9 @@ function SalesChart({ dailyStats }) {
    todos los pedidos de ese periodo. No se genera nada por venta individual.
 ---------------------------------------------------------------------------- */
 function SalesReportPanel({ customers, orders, dailyStats }) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateStr();
   const daysAgo = (n) => {
-    const d = new Date();
-    d.setDate(d.getDate() - n);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(new Date(Date.now() - n * 86400000));
   };
   const monthStart = todayStr.slice(0, 8) + "01";
 
@@ -5554,7 +5585,7 @@ function SalesReportPanel({ customers, orders, dailyStats }) {
 function AdminStatsTab({ stats, stockLevels, customers, orders }) {
   const [expandedKey, setExpandedKey] = useState(null);
   const dailyStats = useMemo(() => computeDailyStats(customers, orders), [customers, orders]);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateStr();
 
   return (
     <div>

@@ -225,6 +225,13 @@ function localDateStr(input) {
   // "en-CA" devuelve el formato AAAA-MM-DD
   return d.toLocaleDateString("en-CA", { timeZone: BUSINESS_TZ });
 }
+// Hora en que se solicitó el pedido, en hora de México (ej. "8:50 p.m.")
+function formatTime(input) {
+  if (!input) return "";
+  const d = new Date(input);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("es-MX", { timeZone: BUSINESS_TZ, hour: "numeric", minute: "2-digit", hour12: true });
+}
 function utcDateStr(input) {
   const d = new Date(input);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
@@ -282,6 +289,7 @@ async function attachShippingCosts(orders) {
     }
     return orders.map((o) => {
       let next = o;
+      if (o.dbOrderId != null && rowById[o.dbOrderId]?.created_at) next = { ...next, orderTime: rowById[o.dbOrderId].created_at };
       if (o.dbOrderId != null && typeof costById[o.dbOrderId] === "number") next = { ...next, shippingCost: costById[o.dbOrderId] };
       // Corrige la fecha: si la que traía el pedido era la fecha UTC de su
       // created_at / confirmed_at, la cambia por la fecha en hora de México.
@@ -1943,7 +1951,7 @@ export default function CustomerHub() {
       // cantidades/sabores al negociar por WhatsApp.
       setOrders((o) => ({
         ...o,
-        [currentUser.id]: [{ id: orderId, date: today, subtotal, creditUsed, total, status: "Pendiente", pointsEarned, items, origin: "app", dbOrderId: null, ...delivery }, ...(o[currentUser.id] || [])],
+        [currentUser.id]: [{ id: orderId, date: today, orderTime: new Date().toISOString(), subtotal, creditUsed, total, status: "Pendiente", pointsEarned, items, origin: "app", dbOrderId: null, ...delivery }, ...(o[currentUser.id] || [])],
       }));
       setLastOrder({ items, pricing, subtotal, creditUsed, total, pointsEarned, date: today, ...delivery });
       // Guarda el pedido en Supabase en segundo plano — sin bloquear la
@@ -2291,7 +2299,7 @@ export default function CustomerHub() {
     // página, aquí el pago ya se recibió al momento de registrarla.
     setOrders((o) => ({
       ...o,
-      [customerId]: [{ id: orderId, date: today, total: pricing.total, status: "Completado", pointsEarned, items, origin: "whatsapp", paymentMethod: paymentMethod || "" }, ...(o[customerId] || [])],
+      [customerId]: [{ id: orderId, date: today, orderTime: new Date().toISOString(), total: pricing.total, status: "Completado", pointsEarned, items, origin: "whatsapp", paymentMethod: paymentMethod || "" }, ...(o[customerId] || [])],
     }));
 
     setCustomers((cs) => cs.map((c) => c.id === customerId
@@ -5206,7 +5214,7 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
                 {customer?.name || "Cliente"}
                 {customer?.status === "provisional" && <span style={{ color: "var(--gold)", fontWeight: 600 }}> · Sin registrar</span>}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-faint)" }}>Folio {order.id} · {formatDate(order.date)}</div>
+              <div style={{ fontSize: 11, color: "var(--text-faint)" }}>Folio {order.id} · {formatDate(order.date)}{order.orderTime ? ` · ${formatTime(order.orderTime)}` : ""}</div>
             </div>
             {customer?.phone && (
               <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>{customer.phone}</div>
@@ -5320,7 +5328,7 @@ function AdminOrdersTab({ stats, customers, onConfirmOrder, onCancelOrder, onUpd
               <span style={{ color: statusColor(o.status), fontWeight: 600 }}>{o.status}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--text-faint)", marginTop: 2 }}>
-              <span>{formatDate(o.date)} · {o.origin === "whatsapp" ? "WhatsApp" : "Página"} · {(o.items || []).reduce((s, i) => s + i.qty, 0)} pzs</span>
+              <span>{formatDate(o.date)}{o.orderTime ? ` · ${formatTime(o.orderTime)}` : ""} · {o.origin === "whatsapp" ? "WhatsApp" : "Página"} · {(o.items || []).reduce((s, i) => s + i.qty, 0)} pzs</span>
               <span>{formatMoney(o.total)}</span>
             </div>
           </div>
